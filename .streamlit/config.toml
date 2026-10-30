@@ -1,0 +1,10 @@
+[server]
+# วิดีโอ 4K ไฟล์ใหญ่ (ตัวอย่างในโปรเจกต์ใหญ่ถึง ~175 MB) ค่าเริ่มต้นของ Streamlit คือ 200 MB
+maxUploadSize = 1024
+
+[theme]
+base = "dark"
+primaryColor = "#3B82F6"
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#E2E8F0"

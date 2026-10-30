@@ -38,42 +38,74 @@ def apply_clahe(frame, clip_limit=DEFAULT_CLIP_LIMIT, tile_grid=DEFAULT_TILE_GRI
     return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
 
 
-def make_roi_mask(width, height, polygon=DEFAULT_ROI_POLYGON):
-    """สร้างหน้ากากขาวดำขนาดเท่าภาพ: ในพื้นที่ถนน = 255 (ขาว), นอกถนน = 0 (ดำ)"""
-    points = np.array([(int(x * width), int(y * height)) for x, y in polygon], dtype=np.int32)
-    mask = np.zeros((height, width), dtype=np.uint8)
-    cv2.fillPoly(mask, [points], 255)
+def roi_points(width, height, polygon=DEFAULT_ROI_POLYGON):
+    """จุดมุม ROI เป็นพิกเซล สำหรับวาดเส้นขอบบนภาพ"""
+    return np.array([(int(x * width), int(y * height)) for x, y in polygon], dtype=np.int32)
+
+
+def make_roi_mask(width, height, polygon=DEFAULT_ROI_POLYGON, exclude_polygons=()):
+    """สร้างหน้ากากขาวดำขนาดเท่าภาพ: พื้นที่ที่ให้โมเดลดู = 255 (ขาว), พื้นที่ที่ไม่สนใจ = 0 (ดำ)
+
+    polygon = พื้นที่ถนนที่ให้ดู (None = ดูทั้งภาพ)
+    exclude_polygons = พื้นที่ที่ผู้ใช้วาดให้ไม่สนใจ (ถมดำทับ) วาดได้หลายพื้นที่
+    """
+    if polygon is None:
+        mask = np.full((height, width), 255, dtype=np.uint8)
+    else:
+        mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillPoly(mask, [roi_points(width, height, polygon)], 255)
+    for poly in exclude_polygons:
+        cv2.fillPoly(mask, [roi_points(width, height, poly)], 0)
     return mask
 
 
 def apply_roi(frame, mask):
-    """เก็บเฉพาะพิกเซลในพื้นที่ถนน ส่วนอื่นกลายเป็นสีดำ (bitwise AND กับหน้ากาก)"""
+    """เก็บเฉพาะพิกเซลในพื้นที่ที่ให้ดู ส่วนอื่นกลายเป็นสีดำ (bitwise AND กับหน้ากาก)"""
     return cv2.bitwise_and(frame, frame, mask=mask)
 
 
-def roi_points(width, height, polygon=DEFAULT_ROI_POLYGON):
-    """จุดมุม ROI เป็นพิกเซล สำหรับวาดเส้นขอบบนภาพ"""
-    return np.array([(int(x * width), int(y * height)) for x, y in polygon], dtype=np.int32)
+def shade_outside(frame, mask, strength=0.6):
+    """ทำให้พื้นที่ที่ไม่สนใจมืดลงแบบโปร่งแสง ใช้แสดงผลให้คนดู (โมเดลยังได้ภาพดำทึบ)"""
+    shaded = frame.copy()
+    outside = mask == 0
+    shaded[outside] = (frame[outside] * (1 - strength)).astype(np.uint8)
+    return shaded
+
+
+def mean_brightness(frame):
+    """ค่าความสว่างเฉลี่ย (ช่อง L ของ LAB, 0-255) ใช้แนะนำว่าควรเปิด CLAHE ไหม"""
+    return float(cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)[:, :, 0].mean())
 
 
 class Preprocessor:
     """รวมขั้นตอน Image Processing ที่เปิด/ปิดได้ สร้างครั้งเดียวต่อวิดีโอ"""
 
     def __init__(self, width, height, use_clahe=False, use_roi=False,
-                 clip_limit=DEFAULT_CLIP_LIMIT, roi_polygon=DEFAULT_ROI_POLYGON):
+                 clip_limit=DEFAULT_CLIP_LIMIT, roi_polygon=DEFAULT_ROI_POLYGON, exclude_polygons=()):
         self.use_clahe = use_clahe
         self.use_roi = use_roi
         self.clip_limit = clip_limit
         # หน้ากากสร้างครั้งเดียว ใช้ซ้ำทุกเฟรม เพราะกล้องไม่ขยับ
-        self.mask = make_roi_mask(width, height, roi_polygon) if use_roi else None
-        self.points = roi_points(width, height, roi_polygon)
+        self.mask = make_roi_mask(width, height, roi_polygon, exclude_polygons) if use_roi else None
+        polygons = ([roi_polygon] if roi_polygon is not None else []) + list(exclude_polygons)
+        self.outlines = [roi_points(width, height, p) for p in polygons]
 
-    def __call__(self, frame):
+    def enhance(self, frame):
+        """ขั้นปรับภาพ (CLAHE) ใช้ทั้งกับภาพที่ส่งให้โมเดลและภาพที่แสดงผล"""
         if self.use_clahe:
             frame = apply_clahe(frame, clip_limit=self.clip_limit)
-        if self.use_roi:
-            frame = apply_roi(frame, self.mask)
         return frame
+
+    def for_model(self, enhanced):
+        """ภาพที่ส่งให้ YOLO: พื้นที่ที่ไม่สนใจเป็นสีดำทึบ"""
+        return apply_roi(enhanced, self.mask) if self.use_roi else enhanced
+
+    def for_display(self, enhanced):
+        """ภาพที่แสดงให้คนดู: พื้นที่ที่ไม่สนใจมืดลงแบบโปร่งแสง ยังเห็นถนนด้านหลัง"""
+        return shade_outside(enhanced, self.mask) if self.use_roi else enhanced.copy()
+
+    def __call__(self, frame):
+        return self.for_model(self.enhance(frame))
 
     def name(self):
         """ชื่อโหมดสำหรับตั้งชื่อไฟล์ผลลัพธ์ เช่น "clahe_roi" หรือ "none" """
