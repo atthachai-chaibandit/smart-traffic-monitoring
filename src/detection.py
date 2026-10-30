@@ -14,13 +14,42 @@ import cv2
 from ultralytics import YOLO
 
 from src.counter import DEFAULT_LINE_Y, DEFAULT_X_LEFT, DEFAULT_X_RIGHT, LineCounter
-from src.preprocessing import Preprocessor
+from src.preprocessing import DEFAULT_ROI_POLYGON, Preprocessor
 
 DEFAULT_MODEL = "best_r2.pt"
 DEFAULT_IMGSZ = 1024     # ต้องเท่ากับตอนเทรน best_r2.pt
 DEFAULT_CONF = 0.25
 OUTPUT_MAX_WIDTH = 1920  # ย่อวิดีโอผลลัพธ์ วิดีโอ 4K ไฟล์ใหญ่และเปิดดูกระตุก
 CLIP_START_SECONDS = 0.5 # ช่วงแรกของคลิปที่ถือว่า "เริ่มคลิป" สำหรับรถที่ทับเส้นอยู่แล้ว
+
+# ตำแหน่งเส้นนับและ ROI แยกตามวิดีโอ เลือกจากชื่อไฟล์ (ไม่รวมนามสกุล)
+# วิดีโอที่ไม่อยู่ในรายการจะใช้ค่าของ cars-on-the-road
+DEFAULT_PRESET = "cars-on-the-road-11668582"
+VIDEO_PRESETS = {
+    # 3840x2160 แนวนอน ถนนสองทิศทาง
+    "cars-on-the-road-11668582": {
+        "line_y": DEFAULT_LINE_Y, "x_left": DEFAULT_X_LEFT, "x_right": DEFAULT_X_RIGHT,
+        "roi_polygon": DEFAULT_ROI_POLYGON,
+    },
+    # 2160x3840 แนวตั้ง กลางคืน วัดจากภาพ 504x898: (8,758) ถึง (513,758)
+    # ปลายขวาเลยขอบภาพไป จึงใช้ 1.0 (ขอบขวาสุด)
+    "vibrant-night-traffic-in-urban-thailand-29900216": {
+        "line_y": 0.844, "x_left": 0.016, "x_right": 1.0,
+        "roi_polygon": None,  # ยังไม่ได้วาดรูปถนนของวิดีโอนี้ จึงเปิด ROI ไม่ได้
+    },
+    # 3840x2160 แนวนอน กลางคืนมืดจริง ใช้ทดสอบ CLAHE
+    # วัดจากภาพ 2557x1437: (788,1181) ถึง (2413,1181)
+    "night-traffic-on-city-highway-38928325": {
+        "line_y": 0.822, "x_left": 0.308, "x_right": 0.944,
+        "roi_polygon": None,
+    },
+}
+
+
+def get_preset(video_path):
+    """ค่าตั้งต้นของเส้นนับและ ROI สำหรับวิดีโอนี้"""
+    return VIDEO_PRESETS.get(Path(video_path).stem, VIDEO_PRESETS[DEFAULT_PRESET])
+
 
 # สีกรอบแต่ละประเภท (OpenCV เรียงสีเป็น B, G, R)
 CLASS_COLORS = {
@@ -68,14 +97,22 @@ def draw_frame(frame, counter, detections, scale, preprocessor=None):
 
 def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
                   imgsz=DEFAULT_IMGSZ, conf=DEFAULT_CONF,
-                  line_y=DEFAULT_LINE_Y, x_left=DEFAULT_X_LEFT, x_right=DEFAULT_X_RIGHT,
+                  line_y=None, x_left=None, x_right=None,
                   start=0.0, duration=None, show=False, progress_callback=None,
                   use_clahe=False, use_roi=False):
     """ประมวลผลวิดีโอทั้งไฟล์ (หรือช่วง start..start+duration วินาที) คืนผลนับเป็น dict
 
     progress_callback(เฟรมที่ทำแล้ว, เฟรมทั้งหมด) ใช้แสดงความคืบหน้า เช่นใน Streamlit
     use_clahe / use_roi เปิด/ปิด Image Processing ก่อนส่งภาพให้ YOLO (ดู src/preprocessing.py)
+    line_y / x_left / x_right ไม่ใส่ = ใช้ค่าของวิดีโอนี้จาก VIDEO_PRESETS
     """
+    preset = get_preset(video_path)
+    line_y = preset["line_y"] if line_y is None else line_y
+    x_left = preset["x_left"] if x_left is None else x_left
+    x_right = preset["x_right"] if x_right is None else x_right
+    if use_roi and preset["roi_polygon"] is None:
+        print("คำเตือน: วิดีโอนี้ยังไม่มีรูปถนนสำหรับ ROI จึงปิด ROI")
+        use_roi = False
     model = YOLO(model_path)
     names = model.names  # แปลงเลขคลาสเป็นชื่อ ไม่เขียนเลขคลาสตายตัวในโค้ด
 
@@ -94,7 +131,8 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     counter = LineCounter(width, height, line_y=line_y, x_left=x_left, x_right=x_right)
-    preprocessor = Preprocessor(width, height, use_clahe=use_clahe, use_roi=use_roi)
+    preprocessor = Preprocessor(width, height, use_clahe=use_clahe, use_roi=use_roi,
+                                roi_polygon=preset["roi_polygon"] or DEFAULT_ROI_POLYGON)
     clip_start_frames = int(CLIP_START_SECONDS * fps)
 
     # ขนาดเส้นและตัวอักษรตามความกว้างภาพ (ออกแบบไว้ที่ 1920)
@@ -110,9 +148,10 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
 
     window = "Smart Traffic Monitoring"
     if show:
-        # หน้าต่างย่อขยายได้ เริ่มที่ 1280x720 เพราะภาพ 1920 กว้างเกินจอโน้ตบุ๊กหลายเครื่อง
+        # หน้าต่างย่อขยายได้ เริ่มให้พอดีกรอบ 1280x720 เพราะภาพ 1920 (หรือวิดีโอแนวตั้ง) ใหญ่เกินจอ
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window, 1280, int(1280 * out_h / out_w))
+        fit = min(1280 / out_w, 720 / out_h)
+        cv2.resizeWindow(window, int(out_w * fit), int(out_h * fit))
 
     t0 = time.time()
     processed = 0
@@ -198,6 +237,10 @@ def main():
     parser.add_argument("--clahe", action="store_true", help="เปิด CLAHE เพิ่มความคมชัดภาพมืด")
     parser.add_argument("--roi", action="store_true", help="เปิด ROI Mask ตรวจจับเฉพาะพื้นที่ถนน")
     args = parser.parse_args()
+
+    if args.roi and get_preset(args.video)["roi_polygon"] is None:
+        print("คำเตือน: วิดีโอนี้ยังไม่มีรูปถนนสำหรับ ROI จึงปิด ROI")
+        args.roi = False
 
     mode = "_".join(p for p, on in (("clahe", args.clahe), ("roi", args.roi)) if on) or "none"
     output = args.output or f"runs/count/{Path(args.video).stem}_{mode}.mp4"
