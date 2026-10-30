@@ -223,3 +223,4 @@ data_video/
 # YOLO outputs and auto-downloaded pretrained weights
 runs/
 yolo11n.pt
+datasets/

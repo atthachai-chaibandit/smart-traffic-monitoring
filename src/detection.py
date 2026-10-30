@@ -14,6 +14,7 @@ import cv2
 from ultralytics import YOLO
 
 from src.counter import DEFAULT_LINE_Y, DEFAULT_X_LEFT, DEFAULT_X_RIGHT, LineCounter
+from src.preprocessing import Preprocessor
 
 DEFAULT_MODEL = "best_r2.pt"
 DEFAULT_IMGSZ = 1024     # ต้องเท่ากับตอนเทรน best_r2.pt
@@ -30,10 +31,13 @@ CLASS_COLORS = {
 }
 
 
-def draw_frame(frame, counter, detections, scale):
+def draw_frame(frame, counter, detections, scale, preprocessor=None):
     """วาดเส้นนับ กรอบรถ และตัวเลขนับลงบนเฟรม"""
     thick = max(1, int(2 * scale))
     font_scale = 0.6 * scale
+
+    if preprocessor and preprocessor.use_roi:
+        cv2.polylines(frame, [preprocessor.points], True, (0, 255, 0), thick)
 
     cv2.line(frame, (counter.x_left, counter.line_y), (counter.x_right, counter.line_y),
              (0, 0, 255), max(2, int(4 * scale)))
@@ -50,6 +54,8 @@ def draw_frame(frame, counter, detections, scale):
     # ตารางตัวเลขนับมุมซ้ายบน
     summary = counter.summary()
     lines = [f"IN {counter.total('in')}   OUT {counter.total('out')}   ALL {counter.total()}"]
+    if preprocessor:
+        lines.append(f"preprocess: {preprocessor.name()}")
     for name in CLASS_COLORS:
         lines.append(f"{name}: in {summary['in'].get(name, 0)} / out {summary['out'].get(name, 0)}")
 
@@ -63,10 +69,12 @@ def draw_frame(frame, counter, detections, scale):
 def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
                   imgsz=DEFAULT_IMGSZ, conf=DEFAULT_CONF,
                   line_y=DEFAULT_LINE_Y, x_left=DEFAULT_X_LEFT, x_right=DEFAULT_X_RIGHT,
-                  start=0.0, duration=None, show=False, progress_callback=None):
+                  start=0.0, duration=None, show=False, progress_callback=None,
+                  use_clahe=False, use_roi=False):
     """ประมวลผลวิดีโอทั้งไฟล์ (หรือช่วง start..start+duration วินาที) คืนผลนับเป็น dict
 
     progress_callback(เฟรมที่ทำแล้ว, เฟรมทั้งหมด) ใช้แสดงความคืบหน้า เช่นใน Streamlit
+    use_clahe / use_roi เปิด/ปิด Image Processing ก่อนส่งภาพให้ YOLO (ดู src/preprocessing.py)
     """
     model = YOLO(model_path)
     names = model.names  # แปลงเลขคลาสเป็นชื่อ ไม่เขียนเลขคลาสตายตัวในโค้ด
@@ -86,6 +94,7 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     counter = LineCounter(width, height, line_y=line_y, x_left=x_left, x_right=x_right)
+    preprocessor = Preprocessor(width, height, use_clahe=use_clahe, use_roi=use_roi)
     clip_start_frames = int(CLIP_START_SECONDS * fps)
 
     # ขนาดเส้นและตัวอักษรตามความกว้างภาพ (ออกแบบไว้ที่ 1920)
@@ -99,6 +108,12 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
         output_path.parent.mkdir(parents=True, exist_ok=True)
         writer = cv2.VideoWriter(str(output_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (out_w, out_h))
 
+    window = "Smart Traffic Monitoring"
+    if show:
+        # หน้าต่างย่อขยายได้ เริ่มที่ 1280x720 เพราะภาพ 1920 กว้างเกินจอโน้ตบุ๊กหลายเครื่อง
+        cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window, 1280, int(1280 * out_h / out_w))
+
     t0 = time.time()
     processed = 0
     for i in range(n_frames):
@@ -106,6 +121,9 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
         if not ok:
             break
         processed += 1
+
+        # Image Processing ก่อนตรวจจับ (ถ้าปิดทั้งสองแบบ เฟรมจะเหมือนเดิม)
+        frame = preprocessor(frame)
 
         # persist=True ให้ Tracker จำ ID ข้ามเฟรม ถ้าไม่ใส่จะได้ ID ใหม่ทุกเฟรม
         result = model.track(frame, persist=True, imgsz=imgsz, conf=conf, verbose=False)[0]
@@ -125,13 +143,13 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
                                    clip_start=i < clip_start_frames)
                 detections.append((x1, y1, x2, y2, track_id, name))
 
-        draw_frame(frame, counter, detections, scale)
+        draw_frame(frame, counter, detections, scale, preprocessor)
         out_frame = cv2.resize(frame, (out_w, out_h)) if out_w != width else frame
 
         if writer:
             writer.write(out_frame)
         if show:
-            cv2.imshow("Smart Traffic Monitoring", out_frame)
+            cv2.imshow(window, out_frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
         if progress_callback:
@@ -151,6 +169,7 @@ def process_video(video_path, model_path=DEFAULT_MODEL, output_path=None,
         "frames": processed,
         "seconds_processed": round(processed / fps, 2),
         "elapsed": round(time.time() - t0, 1),
+        "preprocess": preprocessor.name(),
         "output_path": str(output_path) if output_path else None,
     }
 
@@ -176,16 +195,21 @@ def main():
     parser.add_argument("--duration", type=float, help="ประมวลผลกี่วินาที (ไม่ใส่ = จนจบวิดีโอ)")
     parser.add_argument("--show", action="store_true", help="แสดงหน้าต่างวิดีโอระหว่างประมวลผล")
     parser.add_argument("--manual", type=int, help="จำนวนที่คนนับได้ เพื่อคำนวณความคลาดเคลื่อน")
+    parser.add_argument("--clahe", action="store_true", help="เปิด CLAHE เพิ่มความคมชัดภาพมืด")
+    parser.add_argument("--roi", action="store_true", help="เปิด ROI Mask ตรวจจับเฉพาะพื้นที่ถนน")
     args = parser.parse_args()
 
-    output = args.output or f"runs/count/{Path(args.video).stem}_counted.mp4"
-    print(f"ประมวลผล {args.video} ด้วย {args.model} (imgsz={args.imgsz})")
+    mode = "_".join(p for p, on in (("clahe", args.clahe), ("roi", args.roi)) if on) or "none"
+    output = args.output or f"runs/count/{Path(args.video).stem}_{mode}.mp4"
+    print(f"ประมวลผล {args.video} ด้วย {args.model} (imgsz={args.imgsz}, preprocess={mode})")
 
     result = process_video(args.video, args.model, output, imgsz=args.imgsz, conf=args.conf,
                            start=args.start, duration=args.duration, show=args.show,
-                           progress_callback=print_progress)
+                           progress_callback=print_progress,
+                           use_clahe=args.clahe, use_roi=args.roi)
 
     print("\n===== ผลการนับ =====")
+    print(f"Image Processing: {result['preprocess']}")
     print(f"ช่วงที่ประมวลผล: {result['seconds_processed']} วินาที ({result['frames']} เฟรม)"
           f" ใช้เวลา {result['elapsed']} วินาที")
     print(f"ขาเข้า (in):  {result['total_in']}  {result['summary']['in']}")
