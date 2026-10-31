@@ -1,0 +1,13 @@
+QFrame#previewArea {
+    background-color: #181821;
+    border: 1px solid #39394E;
+    border-radius: 15px;
+}
+QLabel#emptyTitle { font-size: 16px; font-weight: 700; }
+QFrame#playbackBar, QFrame#statCard {
+    background-color: #252533;
+    border: none;
+    border-radius: 11px;
+}
+QLabel#statValue { font-size: 22px; font-weight: 600; }
+QPushButton#playButton { border: 1px solid #A78BFA; border-radius: 14px; }

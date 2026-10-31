@@ -1,0 +1,55 @@
+QFrame#controlPanel {
+    background-color: #252533;
+    border: none;
+    border-radius: 16px;
+}
+QPushButton#uploadButton { background-color: #343447; border-radius: 10px; }
+QPushButton#uploadButton QLabel { font-size: 11px; }
+QPushButton#uploadButton:hover, QPushButton#secondaryButton:hover { background-color: #47475E; }
+QPushButton#uploadButton:pressed, QPushButton#secondaryButton:pressed { background-color: #514969; }
+QPushButton#roadButton {
+    background-color: #353448;
+    border: 1px solid #55516B;
+    border-radius: 9px;
+    font-weight: 600;
+}
+QPushButton#roadButton:hover { background-color: #49435E; border-color: #A78BFA; }
+QPushButton#roadButton:pressed { background-color: #5B497C; }
+QPushButton#secondaryButton { background-color: #39394D; }
+QPushButton#primaryButton {
+    background-color: #A78BFA;
+    color: #15111E;
+    font-weight: 600;
+    border-radius: 9px;
+}
+QPushButton#primaryButton:hover { background-color: #BDA6FF; }
+QPushButton#primaryButton:pressed { background-color: #9372E6; }
+QPushButton#viewChip {
+    background-color: #3A3A49;
+    color: #E9E9F2;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 10px;
+}
+QPushButton#viewChip:checked { background-color: #594A80; border-color: #A78BFA; }
+QPushButton#viewChip:hover, QPushButton#viewChip:focus { border-color: #C4B5FD; }
+QSlider:horizontal { min-height: 16px; }
+QSlider::groove:horizontal { background: #48415E; height: 6px; border-radius: 3px; }
+QSlider::sub-page:horizontal { background: #A78BFA; border-radius: 3px; }
+QSlider::handle:horizontal {
+    background: #A78BFA; width: 12px; margin: -3px 0; border-radius: 6px;
+}
+QSlider::handle:horizontal:hover, QSlider::handle:horizontal:focus { background: #D1C2FF; }
+QCheckBox { background: transparent; spacing: 0; padding: 2px; }
+QCheckBox::indicator {
+    width: 12px; height: 12px; border: 1px solid #79738C;
+    border-radius: 3px; background: #252533;
+}
+QCheckBox::indicator:checked {
+    background: #252533; border-color: #A78BFA;
+    image: url("__ASSETS__/icons/check.svg");
+}
+QCheckBox::indicator:hover { border-color: #C4B5FD; }
+QCheckBox::indicator:focus { border-color: #C4B5FD; }
