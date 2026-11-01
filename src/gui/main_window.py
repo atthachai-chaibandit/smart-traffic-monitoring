@@ -1,6 +1,7 @@
 ﻿
 from pathlib import Path
 from math import isfinite
+from time import perf_counter
 
 import cv2
 import numpy as np
@@ -21,7 +22,7 @@ from .detection_worker import DetectionWorker
 from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
-    """Local media preview and single-frame vehicle detection."""
+    """Local media playback with image and continuous video detection."""
 
     def __init__(self):
         super().__init__()
@@ -36,6 +37,13 @@ class MainWindow(QMainWindow):
         self._detection_busy = False
         self._detection_roi = ()
         self._closing = False
+        self.is_playing = False
+        self.continuous_detection = False
+        # Keep at most one decoded frame waiting for its matching detection result.
+        self._next_detection_frame = None
+        self._active_detection_frame = None
+        self._detection_requested = False
+        self._detection_started = 0.0
 
         # Keep one decoder and one timer for the selected video.
         self.capture = None
@@ -47,6 +55,7 @@ class MainWindow(QMainWindow):
         self._resume_after_seek = False
         self.playback_timer = QTimer(self)
         self.playback_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.playback_timer.setSingleShot(True)
         self.playback_timer.timeout.connect(self.read_next_frame)
         self.set_styles()
         
@@ -258,24 +267,73 @@ class MainWindow(QMainWindow):
         button.setChecked(True)
         panel.set_enhancement_available(self.raw_frame is not None)
         self.refresh_preview()
+        self.request_updated_detection()
 
     def on_brightness_changed(self):
         if self.control_panel.enhance_checkbox.isChecked():
             self.invalidate_detection()
         self.refresh_preview()
+        if self.control_panel.enhance_checkbox.isChecked():
+            self.request_updated_detection()
 
     def invalidate_detection(self):
         # Ignore in-flight results after their source frame or settings change.
         self._detection_revision += 1
+        self._detection_requested = False
         self.preview_canvas.set_detections(None)
 
     def run_detection(self):
+        if self.continuous_detection:
+            self.stop_detection()
+            return
         canvas = self.preview_canvas
         if self.raw_frame is None or self._detection_busy or self._seeking or canvas.edit_mode is not None:
             return
         self.pause_video()
+        if self.at_end and self.capture is not None and not self.reset_video():
+            return
         self.invalidate_detection()
-        frame = self.raw_frame.copy()
+        self.continuous_detection = self.capture is not None
+        self.is_playing = self.continuous_detection
+        self.preview_canvas.set_playing(self.is_playing)
+        if self._next_detection_frame is None:
+            self._next_detection_frame = (self.raw_frame, self.current_frame)
+        self.request_detection()
+
+    def stop_detection(self):
+        self.pause_video()
+        self._resume_after_seek = False
+        self.continuous_detection = False
+        self.invalidate_detection()
+        # Preserve a decoded next frame for ordinary playback without seeking back.
+        if (self._next_detection_frame is not None
+                and self._next_detection_frame[1] <= self.current_frame):
+            self._next_detection_frame = None
+        self.update_edit_controls()
+
+    def request_updated_detection(self):
+        if self.continuous_detection and self.preview_canvas.edit_mode is None and not self._seeking:
+            self.request_detection()
+
+    def request_detection(self):
+        self.playback_timer.stop()
+        if self._next_detection_frame is None:
+            self._next_detection_frame = (self.raw_frame, self.current_frame)
+        # Resume must not submit the same in-flight frame twice.
+        if (self._detection_busy and self.detection_worker.revision == self._detection_revision
+                and self._active_detection_frame is self._next_detection_frame):
+            return
+        self._detection_requested = True
+        self.start_requested_detection()
+
+    def start_requested_detection(self):
+        canvas = self.preview_canvas
+        if (not self._detection_requested or self._detection_busy or self._closing
+                or self._seeking or canvas.edit_mode is not None):
+            return
+        self._active_detection_frame = self._next_detection_frame
+        frame = self._active_detection_frame[0].copy()
+        self._detection_started = perf_counter()
         panel = self.control_panel
         # Preview mode does not affect the pixels sent to the model.
         if panel.enhance_checkbox.isChecked():
@@ -285,31 +343,48 @@ class MainWindow(QMainWindow):
         self.detection_worker.frame = frame
         self.detection_worker.revision = self._detection_revision
         self._detection_busy = True
+        self._detection_requested = False
         self.update_edit_controls()
         self.detection_worker.start()
 
     def on_detection_result(self, revision, detections):
         if revision == self._detection_revision and not self._closing:
+            frame, index = self._active_detection_frame
+            self.display_frame(frame, invalidate=False)
+            # Reprocessing the final displayed frame must preserve EOF for Replay.
+            self.at_end = self.at_end and index == self.current_frame
+            self.current_frame = index
+            if self.capture is not None:
+                self.update_playback_time()
             self.preview_canvas.set_detections(detections)
+            self._next_detection_frame = None
 
     def on_detection_error(self, revision, message):
         if revision == self._detection_revision and not self._closing:
+            self.stop_detection()
             QMessageBox.warning(self, "Detection error", message)
 
     def on_detection_finished(self):
         self._detection_busy = False
         self.detection_worker.frame = None
+        self._active_detection_frame = None
         if self._closing:
             self.close()
         else:
             self.update_edit_controls()
+            if self._detection_requested:
+                self.start_requested_detection()
+            elif self.continuous_detection and self.is_playing:
+                # Subtract inference time instead of adding a full frame delay.
+                elapsed_ms = (perf_counter() - self._detection_started) * 1000
+                self.playback_timer.start(max(1, round(1000 / self.fps - elapsed_ms)))
 
     def refresh_preview(self):
         if self.raw_frame is not None:
             self.display_frame(self.raw_frame)
 
-    def display_frame(self, frame):
-        if frame is not self.raw_frame:
+    def display_frame(self, frame, *, invalidate=True):
+        if invalidate and frame is not self.raw_frame:
             self.invalidate_detection()
         # Always process the raw frame so repeated adjustments do not accumulate.
         panel = self.control_panel
@@ -353,13 +428,15 @@ class MainWindow(QMainWindow):
         self.update_edit_controls()
         self.refresh_preview()
         self.preview_canvas.image_label.update()
+        if self.preview_canvas.detections is None or self._next_detection_frame is not None:
+            self.request_updated_detection()
 
     def update_edit_controls(self):
         canvas = self.preview_canvas
         editing = canvas.edit_mode is not None
         self.control_panel.set_detection_state(
             self.raw_frame is not None and not editing and not self._closing,
-            self._detection_busy,
+            self._detection_busy, self.continuous_detection,
         )
         # Keep the whole image available for placing points while editing.
         canvas.detection_overlay.setVisible(not editing)
@@ -392,40 +469,61 @@ class MainWindow(QMainWindow):
     def toggle_playback(self):
         if self.capture is None or self._seeking or self.preview_canvas.edit_mode is not None:
             return
-        if self.playback_timer.isActive():
+        if self.is_playing:
             self.pause_video()
             return
         if self.at_end and not self.reset_video():
             return
 
-        self.invalidate_detection()
-        self.playback_timer.start(max(1, round(1000 / self.fps)))
+        self.is_playing = True
         self.preview_canvas.set_playing(True)
+        if self.continuous_detection:
+            if self._next_detection_frame is not None or self.preview_canvas.detections is None:
+                self.request_detection()
+            else:
+                self.playback_timer.start(max(1, round(1000 / self.fps)))
+        else:
+            self.invalidate_detection()
+            self.playback_timer.start(max(1, round(1000 / self.fps)))
 
     def pause_video(self):
         # Keep the decoder position so Play resumes from the same frame.
         self.playback_timer.stop()
+        self.is_playing = False
         self.preview_canvas.set_playing(False)
 
     def read_next_frame(self):
-        if self.capture is None:
+        if self.capture is None or not self.is_playing:
+            return
+        if self.continuous_detection and self._detection_busy:
             return
         try:
-            ok, frame = self.capture.read()
+            if self._next_detection_frame is not None:
+                frame, frame_index = self._next_detection_frame
+                self._next_detection_frame = None
+                ok = True
+            else:
+                ok, frame = self.capture.read()
+                frame_index = self.current_frame + 1
             if not ok or frame is None:
                 self.pause_video()
                 self.at_end = True
                 self.update_playback_time()
                 return
+            if self.continuous_detection:
+                self._next_detection_frame = (frame, frame_index)
+                self.request_detection()
+                return
             self.display_frame(frame)
         except cv2.error as error:
-            self.pause_video()
+            self.stop_detection()
             self.at_end = True
             QMessageBox.warning(self, "Video playback error", str(error))
             return
 
-        self.current_frame += 1
+        self.current_frame = frame_index
         self.update_playback_time()
+        self.playback_timer.start(max(1, round(1000 / self.fps)))
 
     def reset_video(self):
         # Reset rewinds the video without clearing ROI or overlay preferences.
@@ -435,6 +533,8 @@ class MainWindow(QMainWindow):
         if self.capture is None or self.preview_canvas.edit_mode is not None:
             return False
         self.pause_video()
+        if self.continuous_detection:
+            self.invalidate_detection()
         frame_index = max(0, min(frame_index, self.total_frames - 1)) if self.total_frames else 0
         try:
             if not self.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index):
@@ -442,9 +542,12 @@ class MainWindow(QMainWindow):
             ok, frame = self.capture.read()
             if not ok or frame is None:
                 raise ValueError("Could not read the selected video frame.")
+            self._next_detection_frame = None
             self.display_frame(frame)
         except (ValueError, cv2.error) as error:
             # Restore the displayed position and remain paused if seeking fails.
+            if self.continuous_detection:
+                self.stop_detection()
             self.update_playback_time()
             self.at_end = True
             QMessageBox.warning(self, "Unable to seek video", str(error))
@@ -453,14 +556,18 @@ class MainWindow(QMainWindow):
         self.current_frame = frame_index
         self.at_end = False
         self.update_playback_time()
+        if self.continuous_detection:
+            self.request_detection()
         return True
 
     def begin_seek(self):
         if self.capture is None or self.total_frames <= 0 or self.preview_canvas.edit_mode is not None:
             return
-        self._resume_after_seek = self.playback_timer.isActive()
+        self._resume_after_seek = self.is_playing
         self._seeking = True
         self.pause_video()
+        if self.continuous_detection:
+            self.invalidate_detection()
 
     def preview_seek_time(self, frame_index):
         if self._seeking:
@@ -481,7 +588,7 @@ class MainWindow(QMainWindow):
         # Arrow keys and track clicks seek immediately; dragging seeks on release.
         if self._seeking or self.capture is None or self.total_frames <= 0:
             return
-        resume = self.playback_timer.isActive()
+        resume = self.is_playing
         if self.seek_video(frame_index) and resume:
             self.toggle_playback()
 
@@ -496,6 +603,9 @@ class MainWindow(QMainWindow):
 
     def stop_current_video(self):
         self.pause_video()
+        self.continuous_detection = False
+        self._detection_requested = False
+        self._next_detection_frame = None
         if self.capture is not None:
             self.capture.release()
             self.capture = None

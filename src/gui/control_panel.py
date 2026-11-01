@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QSlider, QVBoxLayout,
@@ -302,9 +303,16 @@ class ControlPanel(QFrame):
         self.reset_line_btn.setVisible(has_line and not editing)
         self.reset_line_btn.setEnabled(available and has_line and not editing)
 
-    def set_detection_state(self, available, busy):
-        self.detect_btn.setEnabled(available and not busy)
-        self.detect_btn.setText("Detecting..." if busy else "Run Detection")
+    def set_detection_state(self, available, busy, continuous=False):
+        # Stop stays available even while the worker is processing a frame.
+        self.detect_btn.setEnabled(continuous or (available and not busy))
+        text = "Stop Detection" if continuous else "Detecting..." if busy else "Run Detection"
+        if self.detect_btn.text() != text:
+            self.detect_btn.setText(text)
+            if continuous:
+                self.detect_btn.setIcon(QIcon())
+            else:
+                set_button_icon(self.detect_btn, "player-play", "#15111E", 19)
 
     def _update_filename(self):
         text = self._filename or "No file selected"
