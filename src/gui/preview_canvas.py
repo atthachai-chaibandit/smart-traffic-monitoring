@@ -8,8 +8,8 @@ from .detection_overlay import DetectionOverlay
 from .media_formats import SUPPORTED_FILE_FORMATS
 
 
-class RoiImageLabel(QLabel):
-    """Draw the ROI over the displayed image without changing its pixels."""
+class PreviewImageLabel(QLabel):
+    """Draw annotations over the image without changing its pixels."""
 
     def __init__(self, canvas):
         super().__init__(canvas.preview)
@@ -19,20 +19,22 @@ class RoiImageLabel(QLabel):
         super().paintEvent(event)
         painter = QPainter(self)
         self.canvas.paint_roi(painter)
+        self.canvas.paint_counting_line(painter)
         painter.end()
 
 
 class PreviewCanvas(QWidget):
-    roi_changed = pyqtSignal()
+    edit_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         self.original_pixmap = QPixmap()
         # Store confirmed and draft points in source-image pixels, not widget pixels.
         self.roi_points = []
+        self.counting_line = []
         self.draft_points = []
         self.redo_points = []
-        self.editing_roi = False
+        self.edit_mode = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -96,7 +98,7 @@ class PreviewCanvas(QWidget):
         layout.addWidget(self.preview, 1)
 
         # A child label avoids letting the source image's size affect the layout.
-        self.image_label = RoiImageLabel(self)
+        self.image_label = PreviewImageLabel(self)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.image_label.installEventFilter(self)
@@ -217,7 +219,7 @@ class PreviewCanvas(QWidget):
         self.mode_label.setText(mode)
 
     def clear_media(self):
-        self.clear_roi()
+        self.clear_annotations()
         self.set_preview_mode("")
         self.original_pixmap = QPixmap()
         self.image_label.clear()
@@ -229,19 +231,21 @@ class PreviewCanvas(QWidget):
             card.findChild(QLabel, "statValue").setText("\u2014")
         self.update_empty_spacing()
 
-    def begin_roi(self):
-        if self.original_pixmap.isNull() or self.editing_roi:
+    def begin_edit(self, mode):
+        if self.original_pixmap.isNull() or self.edit_mode is not None:
             return
-        # Keep the confirmed polygon until the replacement is accepted.
+        # Keep confirmed geometry until the replacement is accepted.
         self.draft_points = []
         self.redo_points = []
-        self.editing_roi = True
+        self.edit_mode = mode
         self.image_label.setCursor(Qt.CursorShape.CrossCursor)
         self.image_label.setFocus()
-        self.roi_changed.emit()
+        self.edit_changed.emit()
 
-    def can_apply_roi(self):
-        if not self.editing_roi or len(self.draft_points) < 3:
+    def can_apply_edit(self):
+        if self.edit_mode == "line":
+            return len(self.draft_points) == 2 and self.draft_points[0] != self.draft_points[1]
+        if self.edit_mode != "roi" or len(self.draft_points) < 3:
             return False
         # Reject points that form a line instead of an area.
         points = self.draft_points
@@ -252,33 +256,45 @@ class PreviewCanvas(QWidget):
         )
         return area_twice != 0
 
-    def finish_roi(self):
-        if not self.can_apply_roi():
+    def apply_edit(self):
+        if not self.can_apply_edit():
             return False
-        self.roi_points = list(self.draft_points)
-        self.cancel_roi()
+        if self.edit_mode == "roi":
+            self.roi_points = list(self.draft_points)
+        else:
+            self.counting_line = list(self.draft_points)
+        self.cancel_edit()
         return True
 
-    def cancel_roi(self):
+    def cancel_edit(self):
         self.draft_points = []
         self.redo_points = []
-        self.editing_roi = False
+        self.edit_mode = None
         self.image_label.unsetCursor()
-        self.roi_changed.emit()
+        self.edit_changed.emit()
 
-    def undo_roi_point(self):
-        if self.editing_roi and self.draft_points:
+    def undo_edit_point(self):
+        if self.edit_mode is not None and self.draft_points:
             self.redo_points.append(self.draft_points.pop())
-            self.roi_changed.emit()
+            self.edit_changed.emit()
 
-    def redo_roi_point(self):
-        if self.editing_roi and self.redo_points:
+    def redo_edit_point(self):
+        if self.edit_mode is not None and self.redo_points:
             self.draft_points.append(self.redo_points.pop())
-            self.roi_changed.emit()
+            self.edit_changed.emit()
 
     def clear_roi(self):
         self.roi_points = []
-        self.cancel_roi()
+        self.edit_changed.emit()
+
+    def clear_counting_line(self):
+        self.counting_line = []
+        self.edit_changed.emit()
+
+    def clear_annotations(self):
+        self.roi_points = []
+        self.counting_line = []
+        self.cancel_edit()
 
     def image_rect(self):
         """Return the actual image bounds inside the centered label, in logical pixels."""
@@ -312,14 +328,14 @@ class PreviewCanvas(QWidget):
     def paint_roi(self, painter):
         if self.original_pixmap.isNull():
             return
-        points = self.draft_points if self.editing_roi else self.roi_points
+        points = self.draft_points if self.edit_mode == "roi" else self.roi_points
         if not points:
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setClipRect(self.image_rect())
         painter.setPen(QPen(QColor("#A78BFA"), 2))
         polygon = QPolygonF([self.image_to_preview(point) for point in points])
-        if self.editing_roi:
+        if self.edit_mode == "roi":
             painter.drawPolyline(polygon)
             painter.setBrush(QColor("#A78BFA"))
             for point in polygon:
@@ -327,6 +343,22 @@ class PreviewCanvas(QWidget):
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolygon(polygon)
+
+    def paint_counting_line(self, painter):
+        if self.original_pixmap.isNull():
+            return
+        points = self.draft_points if self.edit_mode == "line" else self.counting_line
+        if not points:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(self.image_rect())
+        painter.setPen(QPen(QColor("#FF4D4F"), 2))
+        if len(points) == 2:
+            painter.drawLine(self.image_to_preview(points[0]), self.image_to_preview(points[1]))
+        if self.edit_mode == "line":
+            painter.setBrush(QColor("#FF4D4F"))
+            for point in points:
+                painter.drawEllipse(self.image_to_preview(point), 3, 3)
 
     def update_empty_spacing(self):
         overlay = self.detection_overlay
@@ -353,14 +385,16 @@ class PreviewCanvas(QWidget):
         self.image_label.setPixmap(pixmap)
 
     def eventFilter(self, watched, event):
-        if watched is self.image_label and self.editing_roi:
+        if watched is self.image_label and self.edit_mode is not None:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 point = self.preview_to_image(event.position())
+                if self.edit_mode == "line" and len(self.draft_points) >= 2:
+                    return True
                 if point is not None and point not in self.draft_points:
                     self.draft_points.append(point)
                     # A new point starts a different history after Undo.
                     self.redo_points.clear()
-                    self.roi_changed.emit()
+                    self.edit_changed.emit()
                 return True
         # Adjust Empty State Spacing When Preview Resizes
         if watched is self.preview and event.type() == QEvent.Type.Resize:

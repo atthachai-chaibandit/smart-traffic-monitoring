@@ -22,6 +22,7 @@ class ControlPanel(QFrame):
         self.setup_ui()
         self.set_enhancement_available(False)
         self.set_roi_controls(False, False, False, False)
+        self.set_line_controls(False, False, False, False)
 
     def setup_ui(self):
         # Main Layout
@@ -205,7 +206,27 @@ class ControlPanel(QFrame):
         self.counting_line_btn = self.make_button(
             "Draw Counting Line", "roadButton", "line"
         )
-        layout.addWidget(self.counting_line_btn)
+        self.apply_line_btn = self.make_button("Apply Line", "roadButton", "circle-check")
+        self.cancel_line_btn = self.make_button("Cancel", "secondaryButton")
+        self.cancel_line_btn.setMinimumHeight(36)
+        line_row = QHBoxLayout()
+        line_row.setSpacing(8)
+        line_row.addWidget(self.counting_line_btn, 2)
+        line_row.addWidget(self.apply_line_btn, 2)
+        line_row.addWidget(self.cancel_line_btn, 1)
+        layout.addLayout(line_row)
+
+        self.line_undo_btn = self.make_button("Undo Point", "secondaryButton")
+        self.line_redo_btn = self.make_button("Redo Point", "secondaryButton")
+        self.line_undo_btn.setToolTip("Undo point (Ctrl+Z)")
+        self.line_redo_btn.setToolTip("Redo point (Ctrl+Y)")
+        history_row = QHBoxLayout()
+        history_row.setSpacing(8)
+        history_row.addWidget(self.line_undo_btn)
+        history_row.addWidget(self.line_redo_btn)
+        layout.addLayout(history_row)
+        self.reset_line_btn = self.make_button("Reset Line", "secondaryButton")
+        layout.addWidget(self.reset_line_btn)
 
         self.add_separator(layout)
 
@@ -260,8 +281,25 @@ class ControlPanel(QFrame):
         self.redo_btn.setVisible(editing)
         self.redo_btn.setEnabled(editing and can_redo)
         self.reset_roi_btn.setVisible(has_roi and not editing)
-        self.reset_roi_btn.setEnabled(has_roi and not editing)
-        self.mask_checkbox.setEnabled(has_roi and not editing)
+        self.reset_roi_btn.setEnabled(available and has_roi and not editing)
+        self.mask_checkbox.setEnabled(available and has_roi and not editing)
+
+    def set_line_controls(self, available, editing, has_points, has_line,
+                          can_apply=False, can_redo=False):
+        self.counting_line_btn.setText(
+            "Draw / Edit Counting Line" if has_line else "Draw Counting Line"
+        )
+        self.counting_line_btn.setVisible(not editing)
+        self.counting_line_btn.setEnabled(available and not editing)
+        self.apply_line_btn.setVisible(editing)
+        self.apply_line_btn.setEnabled(editing and can_apply)
+        self.cancel_line_btn.setVisible(editing)
+        self.line_undo_btn.setVisible(editing)
+        self.line_undo_btn.setEnabled(editing and has_points)
+        self.line_redo_btn.setVisible(editing)
+        self.line_redo_btn.setEnabled(editing and can_redo)
+        self.reset_line_btn.setVisible(has_line and not editing)
+        self.reset_line_btn.setEnabled(available and has_line and not editing)
 
     def _update_filename(self):
         text = self._filename or "No file selected"

@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
         # Initialize UI and Signals
         self.setup_ui()
         self.connect_signals()
-        self.update_roi_controls()
+        self.update_edit_controls()
         
         # Center Window on Screen
         screen = self.screen()
@@ -133,23 +133,30 @@ class MainWindow(QMainWindow):
         panel.enhanced_btn.clicked.connect(self.refresh_preview)
 
         panel.roi_btn.clicked.connect(self.begin_roi)
-        panel.apply_roi_btn.clicked.connect(self.finish_roi)
-        panel.cancel_roi_btn.clicked.connect(self.preview_canvas.cancel_roi)
-        panel.undo_btn.clicked.connect(self.preview_canvas.undo_roi_point)
-        panel.redo_btn.clicked.connect(self.preview_canvas.redo_roi_point)
+        panel.apply_roi_btn.clicked.connect(self.preview_canvas.apply_edit)
+        panel.cancel_roi_btn.clicked.connect(self.preview_canvas.cancel_edit)
+        panel.undo_btn.clicked.connect(self.preview_canvas.undo_edit_point)
+        panel.redo_btn.clicked.connect(self.preview_canvas.redo_edit_point)
         panel.reset_roi_btn.clicked.connect(self.preview_canvas.clear_roi)
+        panel.counting_line_btn.clicked.connect(self.begin_counting_line)
+        panel.apply_line_btn.clicked.connect(self.preview_canvas.apply_edit)
+        panel.cancel_line_btn.clicked.connect(self.preview_canvas.cancel_edit)
+        panel.line_undo_btn.clicked.connect(self.preview_canvas.undo_edit_point)
+        panel.line_redo_btn.clicked.connect(self.preview_canvas.redo_edit_point)
+        panel.reset_line_btn.clicked.connect(self.preview_canvas.clear_counting_line)
         panel.mask_checkbox.toggled.connect(self.refresh_preview)
-        self.preview_canvas.roi_changed.connect(self.on_roi_changed)
+        self.preview_canvas.edit_changed.connect(self.on_edit_changed)
 
         # Window shortcuts still work after using a control outside the image.
-        self.roi_shortcuts = []
-        for key, handler in (("Return", self.finish_roi), ("Enter", self.finish_roi),
-                             ("Escape", self.preview_canvas.cancel_roi),
-                             ("Ctrl+Z", self.preview_canvas.undo_roi_point),
-                             ("Ctrl+Y", self.preview_canvas.redo_roi_point)):
+        self.edit_shortcuts = []
+        for key, handler in (("Return", self.preview_canvas.apply_edit),
+                             ("Enter", self.preview_canvas.apply_edit),
+                             ("Escape", self.preview_canvas.cancel_edit),
+                             ("Ctrl+Z", self.preview_canvas.undo_edit_point),
+                             ("Ctrl+Y", self.preview_canvas.redo_edit_point)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(handler)
-            self.roi_shortcuts.append(shortcut)
+            self.edit_shortcuts.append(shortcut)
         
     def browse_media(self):
         # Generate Supported Media File Filter
@@ -209,7 +216,7 @@ class MainWindow(QMainWindow):
         # Keep the previous file and preview intact until decoding succeeds.
         self.stop_current_video()
         self.raw_frame = None
-        self.preview_canvas.clear_roi()
+        self.preview_canvas.clear_annotations()
         self.capture = capture
         self.fps = fps
         self.total_frames = total_frames
@@ -221,7 +228,7 @@ class MainWindow(QMainWindow):
         if capture is not None:
             self.preview_canvas.configure_timeline(self.total_frames, self.fps)
             self.update_playback_time()
-        self.update_roi_controls()
+        self.update_edit_controls()
 
     @staticmethod
     def image_to_frame(image):
@@ -253,41 +260,52 @@ class MainWindow(QMainWindow):
             shown = brighten_frame(frame, panel.brightness_slider.value())
             mode = "Enhanced"
         canvas = self.preview_canvas
-        if canvas.editing_roi:
+        if canvas.edit_mode == "roi":
             # Show the full image while choosing a replacement polygon.
             mode += " · ROI editing"
         elif panel.mask_checkbox.isChecked() and canvas.roi_points:
             shown = mask_outside_roi(shown, canvas.roi_points)
             mode += " · Masked"
+        if canvas.edit_mode == "line":
+            mode += " · Line editing"
         image = self.frame_to_image(shown)
         self.raw_frame = frame
         self.preview_canvas.show_image(image)
         self.preview_canvas.set_preview_mode(mode)
 
     def begin_roi(self):
-        if self.raw_frame is None or self._seeking:
+        if self.raw_frame is None or self._seeking or self.preview_canvas.edit_mode is not None:
             return
         self.pause_video()
-        self.preview_canvas.begin_roi()
+        self.preview_canvas.begin_edit("roi")
 
-    def finish_roi(self):
-        return self.preview_canvas.finish_roi()
+    def begin_counting_line(self):
+        if self.capture is None or self._seeking or self.preview_canvas.edit_mode is not None:
+            return
+        self.pause_video()
+        self.preview_canvas.begin_edit("line")
 
-    def on_roi_changed(self):
-        self.update_roi_controls()
+    def on_edit_changed(self):
+        self.update_edit_controls()
         self.refresh_preview()
         self.preview_canvas.image_label.update()
 
-    def update_roi_controls(self):
+    def update_edit_controls(self):
         canvas = self.preview_canvas
-        editing = canvas.editing_roi
+        editing = canvas.edit_mode is not None
         # Keep the whole image available for placing points while editing.
         canvas.detection_overlay.setVisible(not editing)
         self.control_panel.set_roi_controls(
-            self.raw_frame is not None, editing, bool(canvas.draft_points),
-            bool(canvas.roi_points), canvas.can_apply_roi(), bool(canvas.redo_points)
+            self.raw_frame is not None and canvas.edit_mode != "line",
+            canvas.edit_mode == "roi", bool(canvas.draft_points),
+            bool(canvas.roi_points), canvas.can_apply_edit(), bool(canvas.redo_points)
         )
-        for shortcut in self.roi_shortcuts:
+        self.control_panel.set_line_controls(
+            self.capture is not None and canvas.edit_mode != "roi",
+            canvas.edit_mode == "line", bool(canvas.draft_points),
+            bool(canvas.counting_line), canvas.can_apply_edit(), bool(canvas.redo_points)
+        )
+        for shortcut in self.edit_shortcuts:
             shortcut.setEnabled(editing)
         video_enabled = self.capture is not None and not editing
         canvas.play_btn.setEnabled(video_enabled)
@@ -304,7 +322,7 @@ class MainWindow(QMainWindow):
         ).copy()
 
     def toggle_playback(self):
-        if self.capture is None or self._seeking or self.preview_canvas.editing_roi:
+        if self.capture is None or self._seeking or self.preview_canvas.edit_mode is not None:
             return
         if self.playback_timer.isActive():
             self.pause_video()
@@ -345,7 +363,7 @@ class MainWindow(QMainWindow):
         return self.seek_video(0)
 
     def seek_video(self, frame_index):
-        if self.capture is None or self.preview_canvas.editing_roi:
+        if self.capture is None or self.preview_canvas.edit_mode is not None:
             return False
         self.pause_video()
         frame_index = max(0, min(frame_index, self.total_frames - 1)) if self.total_frames else 0
@@ -369,7 +387,7 @@ class MainWindow(QMainWindow):
         return True
 
     def begin_seek(self):
-        if self.capture is None or self.total_frames <= 0:
+        if self.capture is None or self.total_frames <= 0 or self.preview_canvas.edit_mode is not None:
             return
         self._resume_after_seek = self.playback_timer.isActive()
         self._seeking = True
