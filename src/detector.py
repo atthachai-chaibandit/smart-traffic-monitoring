@@ -1,4 +1,4 @@
-"""Single-frame vehicle detection, independent of the GUI and counting code."""
+"""Vehicle detection and tracking, independent of the GUI and counting code."""
 from pathlib import Path
 
 
@@ -24,9 +24,20 @@ class VehicleDetector:
         if not set(VEHICLE_COLORS).issubset(set(self.class_names.values())):
             raise ValueError("The model must contain car, motorcycle, bus and truck classes.")
 
-    def detect(self, frame):
-        # Keep coordinates relative to the full source image; no tracking yet.
-        result = self.model.predict(frame, conf=0.25, verbose=False)[0]
+    def reset_tracking(self):
+        # Clear track history without loading the model again.
+        predictor = self.model.predictor
+        for tracker in getattr(predictor, "trackers", ()):
+            tracker.reset()
+
+    def detect(self, frame, *, tracking=False):
+        if tracking:
+            result = self.model.track(
+                frame, persist=True, tracker="bytetrack.yaml", conf=0.25, verbose=False
+            )[0]
+        else:
+            result = self.model.predict(frame, conf=0.25, verbose=False)[0]
+        # Keep coordinates relative to the full source image.
         detections = []
         for box in result.boxes:
             name = result.names[int(box.cls.item())]
@@ -36,5 +47,6 @@ class VehicleDetector:
                 "box": tuple(float(value) for value in box.xyxy[0].tolist()),
                 "class_name": name,
                 "confidence": float(box.conf.item()),
+                "track_id": int(box.id.item()) if tracking and box.id is not None else None,
             })
         return detections

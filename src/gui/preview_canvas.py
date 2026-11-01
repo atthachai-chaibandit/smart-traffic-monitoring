@@ -231,9 +231,18 @@ class PreviewCanvas(QWidget):
         self.empty_state.show()
         self.set_video_mode(False)
         self.detection_overlay.reset_state()
-        for card in (self.total_card, self.in_card, self.out_card):
-            card.findChild(QLabel, "statValue").setText("\u2014")
+        self.set_counting_summary(None)
         self.update_empty_spacing()
+
+    def set_counting_summary(self, counts):
+        if counts is None:
+            values = ("\u2014", "\u2014", "\u2014")
+        else:
+            incoming = sum(counts["in"].values())
+            outgoing = sum(counts["out"].values())
+            values = (incoming + outgoing, incoming, outgoing)
+        for card, value in zip((self.total_card, self.in_card, self.out_card), values):
+            card.findChild(QLabel, "statValue").setText(str(value))
 
     def begin_edit(self, mode):
         if self.original_pixmap.isNull() or self.edit_mode is not None:
@@ -367,6 +376,8 @@ class PreviewCanvas(QWidget):
             painter.setPen(QPen(QColor(VEHICLE_COLORS[detection["class_name"]]), 2))
             painter.drawRect(QRectF(start, end).normalized())
             text = f'{detection["class_name"]} {detection["confidence"]:.2f}'
+            if detection.get("track_id") is not None:
+                text = f'ID {detection["track_id"]} · {text}'
             rect = self.image_rect()
             left = max(rect.left(), min(start.x(), rect.right() - metrics.horizontalAdvance(text)))
             baseline = max(rect.top() + metrics.ascent(), start.y() - 4)
@@ -382,7 +393,25 @@ class PreviewCanvas(QWidget):
         painter.setClipRect(self.image_rect())
         painter.setPen(QPen(QColor("#FF4D4F"), 2))
         if len(points) == 2:
-            painter.drawLine(self.image_to_preview(points[0]), self.image_to_preview(points[1]))
+            start = self.image_to_preview(points[0])
+            end = self.image_to_preview(points[1])
+            painter.drawLine(start, end)
+            if self.edit_mode != "line":
+                # Show the two crossing directions in preview pixels, independent of zoom.
+                dx, dy = end.x() - start.x(), end.y() - start.y()
+                length = (dx * dx + dy * dy) ** 0.5
+                if length:
+                    middle = (start + end) / 2
+                    normal = QPointF(-dy / length, dx / length)
+                    tangent = QPointF(dx / length, dy / length)
+                    for sign, label, color in ((1, "IN", "#34D399"), (-1, "OUT", "#FBBF24")):
+                        tip = middle + normal * (24 * sign)
+                        base = tip - normal * (6 * sign)
+                        painter.setPen(QPen(QColor(color), 2))
+                        painter.drawLine(middle, tip)
+                        painter.drawLine(tip, base + tangent * 4)
+                        painter.drawLine(tip, base - tangent * 4)
+                        painter.drawText(tip + QPointF(7, 4), label)
         if self.edit_mode == "line":
             painter.setBrush(QColor("#FF4D4F"))
             for point in points:

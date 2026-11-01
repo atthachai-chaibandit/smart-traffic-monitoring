@@ -22,9 +22,9 @@ from .detection_worker import DetectionWorker
 from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
-    """Local media playback with image and continuous video detection."""
+    """Local media playback with image detection and continuous video tracking."""
 
-    detect_frame_requested = pyqtSignal(object, int)
+    detect_frame_requested = pyqtSignal(object, int, int, int, bool, object)
 
     def __init__(self):
         super().__init__()
@@ -36,8 +36,10 @@ class MainWindow(QMainWindow):
         self.media_path = None
         self.raw_frame = None
         self._detection_revision = 0
+        self._tracking_session = 0
         self._detection_busy = False
         self._detection_roi = ()
+        self._counting_line = ()
         self._closing = False
         self.is_playing = False
         self.continuous_detection = False
@@ -272,6 +274,7 @@ class MainWindow(QMainWindow):
         return cv2.cvtColor(rgb_pixels, cv2.COLOR_RGB2BGR)
 
     def on_enhancement_toggled(self, enabled):
+        self.reset_tracking_session()
         self.invalidate_detection()
         panel = self.control_panel
         button = panel.enhanced_btn if enabled else panel.original_btn
@@ -282,10 +285,16 @@ class MainWindow(QMainWindow):
 
     def on_brightness_changed(self):
         if self.control_panel.enhance_checkbox.isChecked():
+            self.reset_tracking_session()
             self.invalidate_detection()
         self.refresh_preview()
         if self.control_panel.enhance_checkbox.isChecked():
             self.request_updated_detection()
+
+    def reset_tracking_session(self):
+        # The worker resets its tracker before processing this new session.
+        self._tracking_session += 1
+        self.preview_canvas.set_counting_summary(None)
 
     def invalidate_detection(self):
         # Ignore in-flight results after their source frame or settings change.
@@ -303,6 +312,7 @@ class MainWindow(QMainWindow):
         self.pause_video()
         if self.at_end and self.capture is not None and not self.reset_video():
             return
+        self.reset_tracking_session()
         self.invalidate_detection()
         self.continuous_detection = self.capture is not None
         self.is_playing = self.continuous_detection
@@ -355,9 +365,13 @@ class MainWindow(QMainWindow):
         self._detection_busy = True
         self._detection_requested = False
         self.update_edit_controls()
-        self.detect_frame_requested.emit(frame, self._active_detection_revision)
+        self.detect_frame_requested.emit(
+            frame, self._active_detection_revision, self._tracking_session,
+            self._active_detection_frame[1], self.capture is not None,
+            tuple(self.preview_canvas.counting_line),
+        )
 
-    def on_detection_result(self, revision, detections):
+    def on_detection_result(self, revision, detections, counts):
         if revision == self._detection_revision and not self._closing:
             frame, index = self._active_detection_frame
             self.display_frame(frame, invalidate=False)
@@ -367,6 +381,7 @@ class MainWindow(QMainWindow):
             if self.capture is not None:
                 self.update_playback_time()
             self.preview_canvas.set_detections(detections)
+            self.preview_canvas.set_counting_summary(counts)
             self._next_detection_frame = None
 
     def on_detection_error(self, revision, message):
@@ -432,8 +447,11 @@ class MainWindow(QMainWindow):
 
     def on_edit_changed(self):
         roi = tuple(self.preview_canvas.roi_points)
-        if roi != self._detection_roi:
+        line = tuple(self.preview_canvas.counting_line)
+        if roi != self._detection_roi or line != self._counting_line:
             self._detection_roi = roi
+            self._counting_line = line
+            self.reset_tracking_session()
             self.invalidate_detection()
         self.update_edit_controls()
         self.refresh_preview()
@@ -543,6 +561,7 @@ class MainWindow(QMainWindow):
         if self.capture is None or self.preview_canvas.edit_mode is not None:
             return False
         self.pause_video()
+        self.reset_tracking_session()
         if self.continuous_detection:
             self.invalidate_detection()
         frame_index = max(0, min(frame_index, self.total_frames - 1)) if self.total_frames else 0
@@ -613,6 +632,7 @@ class MainWindow(QMainWindow):
 
     def stop_current_video(self):
         self.pause_video()
+        self.reset_tracking_session()
         self.continuous_detection = False
         self._detection_requested = False
         self._next_detection_frame = None
