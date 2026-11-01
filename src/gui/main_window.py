@@ -3,6 +3,7 @@ from pathlib import Path
 from math import isfinite
 
 import cv2
+import numpy as np
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QImageReader
@@ -16,6 +17,7 @@ from .app_title import AppTitle
 from .control_panel import ControlPanel
 from .preview_canvas import PreviewCanvas
 from .media_formats import SUPPORTED_FILE_FORMATS
+from ..preprocessing import brighten_frame
 
 class MainWindow(QMainWindow):
     """Local media selection and preview; detection is not connected yet."""
@@ -28,6 +30,7 @@ class MainWindow(QMainWindow):
         self.resize(980, 680)
         self.setMinimumSize(800, 580)
         self.media_path = None
+        self.raw_frame = None
 
         # Keep one decoder and one timer for the selected video.
         self.capture = None
@@ -120,6 +123,13 @@ class MainWindow(QMainWindow):
         timeline.sliderMoved.connect(self.preview_seek_time)
         timeline.sliderReleased.connect(self.finish_seek)
         timeline.valueChanged.connect(self.seek_from_slider)
+
+        # Enhancement redraws the stored frame without advancing the decoder.
+        panel = self.control_panel
+        panel.enhance_checkbox.toggled.connect(self.on_enhancement_toggled)
+        panel.brightness_slider.valueChanged.connect(self.refresh_preview)
+        panel.original_btn.clicked.connect(self.refresh_preview)
+        panel.enhanced_btn.clicked.connect(self.refresh_preview)
         
     def browse_media(self):
         # Generate Supported Media File Filter
@@ -157,8 +167,6 @@ class MainWindow(QMainWindow):
                 ok, frame = capture.read()
                 if not ok or frame is None:
                     raise ValueError("Could not read the first video frame.")
-                image = self.frame_to_image(frame)
-
                 # Some codecs do not provide usable FPS or frame-count metadata.
                 reported_fps = capture.get(cv2.CAP_PROP_FPS)
                 frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -170,6 +178,7 @@ class MainWindow(QMainWindow):
                 image = reader.read()
                 if image.isNull():
                     raise ValueError(reader.errorString())
+                frame = self.image_to_frame(image)
 
         except (ValueError, cv2.error) as error:
             if capture is not None:
@@ -182,13 +191,48 @@ class MainWindow(QMainWindow):
         self.capture = capture
         self.fps = fps
         self.total_frames = total_frames
-        self.preview_canvas.show_image(image)
+        self.display_frame(frame)
+        self.control_panel.set_enhancement_available(True)
         self.control_panel.set_filename(source)
         self.media_path = source
         self.preview_canvas.set_video_mode(capture is not None)
         if capture is not None:
             self.preview_canvas.configure_timeline(self.total_frames, self.fps)
             self.update_playback_time()
+
+    @staticmethod
+    def image_to_frame(image):
+        # QImageReader handles EXIF rotation before conversion to OpenCV's BGR.
+        rgb = image.convertToFormat(QImage.Format.Format_RGB888)
+        pixels = np.frombuffer(rgb.constBits().asstring(rgb.sizeInBytes()), dtype=np.uint8)
+        # Ignore row padding, which is present for some image widths.
+        rows = pixels.reshape(rgb.height(), rgb.bytesPerLine())
+        rgb_pixels = rows[:, :rgb.width() * 3].reshape(rgb.height(), rgb.width(), 3)
+        return cv2.cvtColor(rgb_pixels, cv2.COLOR_RGB2BGR)
+
+    def on_enhancement_toggled(self, enabled):
+        panel = self.control_panel
+        button = panel.enhanced_btn if enabled else panel.original_btn
+        button.setChecked(True)
+        panel.set_enhancement_available(self.raw_frame is not None)
+        self.refresh_preview()
+
+    def refresh_preview(self):
+        if self.raw_frame is not None:
+            self.display_frame(self.raw_frame)
+
+    def display_frame(self, frame):
+        # Always process the raw frame so repeated adjustments do not accumulate.
+        panel = self.control_panel
+        shown = frame
+        mode = "Original"
+        if panel.enhance_checkbox.isChecked() and panel.enhanced_btn.isChecked():
+            shown = brighten_frame(frame, panel.brightness_slider.value())
+            mode = "Enhanced"
+        image = self.frame_to_image(shown)
+        self.raw_frame = frame
+        self.preview_canvas.show_image(image)
+        self.preview_canvas.set_preview_mode(mode)
 
     @staticmethod
     def frame_to_image(frame):
@@ -226,7 +270,7 @@ class MainWindow(QMainWindow):
                 self.at_end = True
                 self.update_playback_time()
                 return
-            image = self.frame_to_image(frame)
+            self.display_frame(frame)
         except cv2.error as error:
             self.pause_video()
             self.at_end = True
@@ -234,7 +278,6 @@ class MainWindow(QMainWindow):
             return
 
         self.current_frame += 1
-        self.preview_canvas.show_image(image)
         self.update_playback_time()
 
     def reset_video(self):
@@ -252,7 +295,7 @@ class MainWindow(QMainWindow):
             ok, frame = self.capture.read()
             if not ok or frame is None:
                 raise ValueError("Could not read the selected video frame.")
-            image = self.frame_to_image(frame)
+            self.display_frame(frame)
         except (ValueError, cv2.error) as error:
             # Restore the displayed position and remain paused if seeking fails.
             self.update_playback_time()
@@ -262,7 +305,6 @@ class MainWindow(QMainWindow):
 
         self.current_frame = frame_index
         self.at_end = False
-        self.preview_canvas.show_image(image)
         self.update_playback_time()
         return True
 
@@ -321,6 +363,7 @@ class MainWindow(QMainWindow):
     def clear_media(self):
         self.stop_current_video()
         self.media_path = None
+        self.raw_frame = None
         self.preview_canvas.clear_media()
         self.control_panel.reset_controls()
         self.controls_scroll.verticalScrollBar().setValue(0)

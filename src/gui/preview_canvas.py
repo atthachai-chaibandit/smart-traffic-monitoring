@@ -28,9 +28,9 @@ class PreviewCanvas(QWidget):
         title_row.addStretch()
 
         # Preview Mode Label
-        mode = QLabel("Original / Enhanced / Masked")
-        mode.setObjectName("mutedText")
-        title_row.addWidget(mode)
+        self.mode_label = QLabel("")
+        self.mode_label.setObjectName("mutedText")
+        title_row.addWidget(self.mode_label)
         layout.addLayout(title_row)
 
         # Preview Area
@@ -189,7 +189,11 @@ class PreviewCanvas(QWidget):
         self.update_preview()
         self.detection_overlay.raise_()
 
+    def set_preview_mode(self, mode):
+        self.mode_label.setText(mode)
+
     def clear_media(self):
+        self.set_preview_mode("")
         self.original_pixmap = QPixmap()
         self.image_label.clear()
         self.image_label.hide()

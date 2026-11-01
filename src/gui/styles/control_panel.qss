@@ -51,6 +51,10 @@ QSlider::handle:horizontal {
     background: #A78BFA; width: 12px; margin: -3px 0; border-radius: 6px;
 }
 QSlider::handle:horizontal:hover, QSlider::handle:horizontal:focus { background: #D1C2FF; }
+QSlider#brightnessSlider::groove:horizontal:disabled { background: #393946; }
+QSlider#brightnessSlider::sub-page:horizontal:disabled { background: #555166; }
+QSlider#brightnessSlider::handle:horizontal:disabled { background: #6B667D; }
+QPushButton#viewChip:disabled { color: #777383; background-color: #30303D; border-color: transparent; }
 QCheckBox { background: transparent; spacing: 0; padding: 2px; }
 QCheckBox::indicator {
     width: 12px; height: 12px; border: 1px solid #79738C;

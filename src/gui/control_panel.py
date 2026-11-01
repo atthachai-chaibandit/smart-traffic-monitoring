@@ -20,6 +20,7 @@ class ControlPanel(QFrame):
         self.setObjectName("controlPanel")
         self._filename = ""
         self.setup_ui()
+        self.set_enhancement_available(False)
 
     def setup_ui(self):
         # Main Layout
@@ -102,6 +103,7 @@ class ControlPanel(QFrame):
 
         # Brightness Slider
         self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.brightness_slider.setObjectName("brightnessSlider")
         self.brightness_slider.setRange(0, 100)
         self.brightness_slider.setValue(BRIGHT_STRENGTH)
         self.brightness_slider.setAccessibleName("Brightness strength")
@@ -126,8 +128,9 @@ class ControlPanel(QFrame):
         modes.setSpacing(6)
 
         self.view_modes = QButtonGroup(self)
-        for index, name in enumerate(("Original", "Enhanced")):
-            button = self.make_button(name, "viewChip", checkable=True)
+        self.original_btn = self.make_button("Original", "viewChip", checkable=True)
+        self.enhanced_btn = self.make_button("Enhanced", "viewChip", checkable=True)
+        for index, button in enumerate((self.original_btn, self.enhanced_btn)):
             button.setMinimumHeight(24)
             button.setChecked(index == 0)
             self.view_modes.addButton(button)
@@ -224,8 +227,17 @@ class ControlPanel(QFrame):
         self._update_filename()
         self.enhance_checkbox.setChecked(False)
         self.brightness_slider.setValue(BRIGHT_STRENGTH)
-        self.view_modes.buttons()[0].setChecked(True)
+        self.original_btn.setChecked(True)
         self.mask_checkbox.setChecked(True)
+        self.set_enhancement_available(False)
+
+    def set_enhancement_available(self, available):
+        # Comparing Original keeps the adjustment settings for the next preview.
+        enabled = available and self.enhance_checkbox.isChecked()
+        self.enhance_checkbox.setEnabled(available)
+        self.brightness_slider.setEnabled(enabled)
+        self.original_btn.setEnabled(available)
+        self.enhanced_btn.setEnabled(enabled)
 
     def _update_filename(self):
         text = self._filename or "No file selected"
