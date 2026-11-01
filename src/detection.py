@@ -15,8 +15,9 @@ from ultralytics import YOLO
 
 from src.counter import DEFAULT_LINE_Y, DEFAULT_X_LEFT, DEFAULT_X_RIGHT, LineCounter
 from src.preprocessing import Preprocessor
+from src.detector import MODEL_PATH
 
-DEFAULT_MODEL = "best_r2.pt"
+DEFAULT_MODEL = str(MODEL_PATH)
 DEFAULT_IMGSZ = 1024     # ต้องเท่ากับตอนเทรน best_r2.pt
 DEFAULT_CONF = 0.25
 OUTPUT_MAX_WIDTH = 1920  # ย่อวิดีโอผลลัพธ์ วิดีโอ 4K ไฟล์ใหญ่และเปิดดูกระตุก

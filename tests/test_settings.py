@@ -21,9 +21,11 @@ class SettingsGuiTests(unittest.TestCase):
 
     def test_invalid_confidence_disables_apply(self):
         dialog = SettingsDialog(AppSettings(), self.window)
-        for text in ("", "0", "1.01", "abc"):
+        for text in ("", "0", "1.01", "abc", "0,001", "0,000,001"):
             dialog.confidence_input.setText(text)
             self.assertFalse(dialog.apply_btn.isEnabled())
+            dialog.accept()
+            self.assertEqual(dialog.result(), SettingsDialog.DialogCode.Rejected)
         dialog.confidence_input.setText("0.50")
         self.assertTrue(dialog.apply_btn.isEnabled())
         self.assertEqual(dialog.values().confidence, 0.5)

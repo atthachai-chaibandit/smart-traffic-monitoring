@@ -36,7 +36,9 @@ class SettingsDialog(QDialog):
         row.addStretch()
         self.confidence_input = QLineEdit()
         validator = QDoubleValidator(0.01, 1.0, 2, self)
-        validator.setLocale(QLocale.c())
+        locale = QLocale.c()
+        locale.setNumberOptions(locale.numberOptions() | QLocale.NumberOption.RejectGroupSeparator)
+        validator.setLocale(locale)
         validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         self.confidence_input.setValidator(validator)
         self.confidence_input.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -89,6 +91,13 @@ class SettingsDialog(QDialog):
         self.confidence_checkbox.setChecked(settings.show_confidence)
         self.track_id_checkbox.setChecked(settings.show_track_id)
         self.overlay_checkbox.setChecked(settings.show_overlay)
+
+    def accept(self):
+        # Validate again for keyboard or programmatic acceptance, not only button clicks.
+        if not self.confidence_input.hasAcceptableInput():
+            self.confidence_input.setFocus()
+            return
+        super().accept()
 
     def values(self):
         return AppSettings(

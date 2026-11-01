@@ -216,6 +216,59 @@ class GuiTrackingTests(unittest.TestCase):
         self.assertEqual(self.window.current_frame, 0)
         self.assertEqual(self.detector.resets, 2)
 
+    def test_inflight_result_cannot_change_image_while_drawing_line(self):
+        self.detect_paused_frame()
+        self.detector.gate = Event()
+        self.window.toggle_playback()
+        self.wait_for(lambda: len(self.detector.calls) >= 2)
+        self.window.begin_counting_line()
+        frame = self.window.current_frame
+        self.window.preview_canvas.draft_points = [(10, 10)]
+        self.window.preview_canvas.edit_changed.emit()
+        self.detector.gate.set()
+        self.wait_for(lambda: not self.window._detection_busy)
+        self.assertEqual(self.window.current_frame, frame)
+        self.assertEqual(self.window.preview_canvas.edit_mode, "line")
+        self.window.preview_canvas.cancel_edit()
+        self.wait_for(lambda: not self.window._detection_busy)
+        self.assertEqual(self.window.current_frame, frame + 1)
+
+    def test_fullscreen_preserves_widgets_and_restores_layout(self):
+        self.window.show()
+        self.app.processEvents()
+        self.detect_paused_frame()
+        canvas = self.window.preview_canvas
+        detections = canvas.detections
+        preview_index = canvas.layout().indexOf(canvas.preview)
+        playback_index = canvas.layout().indexOf(canvas.playback)
+        session = self.window._tracking_session
+        canvas.fullscreen_btn.click()
+        self.app.processEvents()
+        self.assertIsNotNone(canvas.fullscreen_dialog)
+        self.assertEqual(canvas.preview.parentWidget(), canvas.fullscreen_dialog)
+        self.assertTrue(canvas.fullscreen_dialog.isFullScreen())
+        canvas.fullscreen_btn.click()
+        self.app.processEvents()
+        self.assertIsNone(canvas.fullscreen_dialog)
+        self.assertEqual(canvas.layout().indexOf(canvas.preview), preview_index)
+        self.assertEqual(canvas.layout().indexOf(canvas.playback), playback_index)
+        self.assertIs(canvas.detections, detections)
+        self.assertEqual(self.window._tracking_session, session)
+
+    def test_escape_exits_fullscreen_and_playback_still_works(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+        self.window.show()
+        self.window.preview_canvas.fullscreen_btn.click()
+        dialog = self.window.preview_canvas.fullscreen_dialog
+        self.app.processEvents()
+        QTest.keyClick(dialog, Qt.Key.Key_Escape)
+        self.app.processEvents()
+        self.assertIsNone(self.window.preview_canvas.fullscreen_dialog)
+        self.window.toggle_playback()
+        self.wait_for(lambda: self.window.current_frame >= 1)
+        self.window.pause_video()
+
 
 if __name__ == "__main__":
     unittest.main()

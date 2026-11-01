@@ -148,6 +148,7 @@ class MainWindow(QMainWindow):
         self.control_panel.clear_btn.clicked.connect(self.clear_media)
         self.preview_canvas.play_btn.clicked.connect(self.toggle_playback)
         self.preview_canvas.reset_btn.clicked.connect(self.reset_video)
+        self.preview_canvas.fullscreen_btn.clicked.connect(self.preview_canvas.toggle_fullscreen)
         timeline = self.preview_canvas.timeline_slider
         timeline.sliderPressed.connect(self.begin_seek)
         timeline.sliderMoved.connect(self.preview_seek_time)
@@ -476,6 +477,7 @@ class MainWindow(QMainWindow):
         if self.capture is None or self._seeking or self.preview_canvas.edit_mode is not None:
             return
         self.pause_video()
+        self.invalidate_detection()
         self.preview_canvas.begin_edit("line")
 
     def on_edit_changed(self):
@@ -514,6 +516,7 @@ class MainWindow(QMainWindow):
         for shortcut in self.edit_shortcuts:
             shortcut.setEnabled(editing)
         video_enabled = self.capture is not None and not editing
+        canvas.fullscreen_btn.setEnabled(self.raw_frame is not None and not editing)
         canvas.play_btn.setEnabled(video_enabled)
         canvas.reset_btn.setEnabled(video_enabled)
         canvas.timeline_slider.setEnabled(video_enabled and self.total_frames > 1)
@@ -692,6 +695,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
+        self.preview_canvas.exit_fullscreen()
         self.invalidate_detection()
         self.stop_current_video()
         if self._detection_busy:

@@ -1,3 +1,4 @@
+QDialog#fullscreenPreview { background-color: #101017; }
 QFrame#previewArea {
     background-color: #181821;
     border: 1px solid #39394E;

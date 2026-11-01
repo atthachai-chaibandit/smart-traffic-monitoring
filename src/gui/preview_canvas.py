@@ -1,7 +1,7 @@
 ﻿
 from PyQt6.QtCore import QEvent, QPointF, QRectF, QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from .icons import get_pixmap, set_button_icon
 from .detection_overlay import DetectionOverlay
@@ -40,6 +40,7 @@ class PreviewCanvas(QWidget):
         self.draft_points = []
         self.redo_points = []
         self.edit_mode = None
+        self.fullscreen_dialog = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -171,6 +172,48 @@ class PreviewCanvas(QWidget):
         self.counting_summary.setToolTip("Cumulative vehicle crossings at the counting line")
         layout.addWidget(self.counting_summary)
         self.set_video_mode(False)
+
+    def toggle_fullscreen(self):
+        if self.fullscreen_dialog is not None:
+            self.exit_fullscreen()
+            return
+        if self.original_pixmap.isNull() or self.edit_mode is not None:
+            return
+        dialog = QDialog(self)
+        dialog.setObjectName("fullscreenPreview")
+        dialog.setWindowTitle("Preview — Esc to exit fullscreen")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        # Move the same widgets so playback, overlays and annotations keep their state.
+        self._fullscreen_widgets = [
+            (self.layout().indexOf(widget), widget) for widget in (self.preview, self.playback)
+        ]
+        layout.addWidget(self.preview, 1)
+        layout.addWidget(self.playback)
+        self.fullscreen_dialog = dialog
+        dialog.finished.connect(self.restore_preview)
+        self.fullscreen_btn.setToolTip("Exit fullscreen (Esc)")
+        self.fullscreen_btn.setAccessibleName("Exit fullscreen")
+        dialog.showFullScreen()
+        self.preview.show()
+        self.playback.show()
+
+    def exit_fullscreen(self):
+        if self.fullscreen_dialog is not None:
+            self.fullscreen_dialog.reject()
+
+    def restore_preview(self):
+        dialog = self.fullscreen_dialog
+        self.fullscreen_dialog = None
+        for index, widget in self._fullscreen_widgets:
+            self.layout().insertWidget(index, widget, 1 if widget is self.preview else 0)
+            widget.show()
+        self.fullscreen_btn.setToolTip("Fullscreen preview")
+        self.fullscreen_btn.setAccessibleName("Fullscreen preview")
+        self.update_preview()
+        dialog.deleteLater()
 
     def set_video_mode(self, enabled):
         self.play_btn.setEnabled(enabled)
