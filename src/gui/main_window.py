@@ -19,12 +19,13 @@ from .control_panel import ControlPanel
 from .preview_canvas import PreviewCanvas
 from .media_formats import SUPPORTED_FILE_FORMATS
 from .detection_worker import DetectionWorker
+from .settings_dialog import AppSettings, SettingsDialog
 from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
     """Local media playback with image detection and continuous video tracking."""
 
-    detect_frame_requested = pyqtSignal(object, int, int, int, bool, object)
+    detect_frame_requested = pyqtSignal(object, int, int, int, bool, object, float)
 
     def __init__(self):
         super().__init__()
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 580)
         self.media_path = None
         self.raw_frame = None
+        self.settings = AppSettings()
         self._detection_revision = 0
         self._tracking_session = 0
         self._detection_busy = False
@@ -91,7 +93,8 @@ class MainWindow(QMainWindow):
                 "main.qss", 
                 "app_title.qss", 
                 "preview_canvas.qss", 
-                "control_panel.qss"
+                "control_panel.qss",
+                "settings_dialog.qss",
             )
         )
 
@@ -139,6 +142,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(content, 1)
         
     def connect_signals(self):
+        self.app_title.settings_btn.clicked.connect(self.open_settings)
         # Connect Upload Button to File Dialog
         self.control_panel.upload_btn.clicked.connect(self.browse_media)
         self.control_panel.clear_btn.clicked.connect(self.clear_media)
@@ -273,6 +277,34 @@ class MainWindow(QMainWindow):
         rgb_pixels = rows[:, :rgb.width() * 3].reshape(rgb.height(), rgb.width(), 3)
         return cv2.cvtColor(rgb_pixels, cv2.COLOR_RGB2BGR)
 
+    def open_settings(self):
+        resume = self.is_playing
+        self.pause_video()
+        dialog = SettingsDialog(self.settings, self)
+        if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+            self.apply_settings(dialog.values())
+        if resume and not self._closing:
+            self.toggle_playback()
+        dialog.deleteLater()
+
+    def apply_settings(self, settings):
+        confidence_changed = settings.confidence != self.settings.confidence
+        had_detection = self.preview_canvas.detections is not None or self._detection_busy
+        self.settings = settings
+        canvas = self.preview_canvas
+        canvas.show_confidence = settings.show_confidence
+        canvas.show_track_id = settings.show_track_id
+        canvas.image_label.update()
+        self.update_edit_controls()
+        if confidence_changed:
+            self.reset_tracking_session()
+            self.invalidate_detection()
+            self.request_updated_detection()
+            # Refresh an already detected image, without starting video detection.
+            if (self.capture is None and self.raw_frame is not None and had_detection
+                    and canvas.edit_mode is None and not self._seeking):
+                self.request_detection()
+
     def on_enhancement_toggled(self, enabled):
         self.reset_tracking_session()
         self.invalidate_detection()
@@ -369,6 +401,7 @@ class MainWindow(QMainWindow):
             frame, self._active_detection_revision, self._tracking_session,
             self._active_detection_frame[1], self.capture is not None,
             tuple(self.preview_canvas.counting_line),
+            self.settings.confidence,
         )
 
     def on_detection_result(self, revision, detections, counts):
@@ -467,7 +500,7 @@ class MainWindow(QMainWindow):
             self._detection_busy, self.continuous_detection,
         )
         # Keep the whole image available for placing points while editing.
-        canvas.detection_overlay.setVisible(not editing)
+        canvas.detection_overlay.setVisible(self.settings.show_overlay and not editing)
         self.control_panel.set_roi_controls(
             self.raw_frame is not None and canvas.edit_mode != "line",
             canvas.edit_mode == "roi", bool(canvas.draft_points),

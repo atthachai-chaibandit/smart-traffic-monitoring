@@ -30,13 +30,13 @@ class VehicleDetector:
         for tracker in getattr(predictor, "trackers", ()):
             tracker.reset()
 
-    def detect(self, frame, *, tracking=False):
+    def detect(self, frame, *, tracking=False, confidence=0.25):
         if tracking:
             result = self.model.track(
-                frame, persist=True, tracker="bytetrack.yaml", conf=0.25, verbose=False
+                frame, persist=True, tracker="bytetrack.yaml", conf=confidence, verbose=False
             )[0]
         else:
-            result = self.model.predict(frame, conf=0.25, verbose=False)[0]
+            result = self.model.predict(frame, conf=confidence, verbose=False)[0]
         # Keep coordinates relative to the full source image.
         detections = []
         for box in result.boxes:

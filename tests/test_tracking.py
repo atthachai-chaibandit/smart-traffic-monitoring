@@ -26,7 +26,7 @@ class FakeDetector:
     def reset_tracking(self):
         self.resets += 1
 
-    def detect(self, frame, *, tracking=False):
+    def detect(self, frame, *, tracking=False, confidence=0.25):
         self.calls.append((get_ident(), tracking, frame.copy()))
         if self.gate is not None:
             if not self.gate.wait(5):

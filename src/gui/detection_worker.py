@@ -18,6 +18,7 @@ class DetectionWorker(QObject):
         self.last_detections = None
         self.counting_line = ()
         self.counter = None
+        self.confidence = 0.25
 
     def start_session(self, session, line):
         # Tracker and counter must always start together on this worker thread.
@@ -28,14 +29,16 @@ class DetectionWorker(QObject):
         self.counting_line = line
         self.counter = LineCounter(line) if len(line) == 2 else None
 
-    @pyqtSlot(object, int, int, int, bool, object)
-    def detect_frame(self, frame, revision, session, frame_index, tracking, counting_line=()):
+    @pyqtSlot(object, int, int, int, bool, object, float)
+    def detect_frame(self, frame, revision, session, frame_index, tracking, counting_line=(), confidence=0.25):
         try:
             if self.detector is None:
                 self.detector = VehicleDetector()
             line = tuple(tuple(point) for point in counting_line) if tracking else ()
-            if session != self.tracking_session or line != self.counting_line:
+            if (session != self.tracking_session or line != self.counting_line
+                    or confidence != self.confidence):
                 self.start_session(session, line)
+                self.confidence = confidence
             if tracking and frame_index == self.last_frame_index:
                 # Redrawing a paused frame must not advance the tracker twice.
                 detections = self.last_detections
@@ -43,7 +46,7 @@ class DetectionWorker(QObject):
                 if (tracking and self.last_frame_index is not None
                         and frame_index != self.last_frame_index + 1):
                     self.start_session(session, line)
-                detections = self.detector.detect(frame, tracking=tracking)
+                detections = self.detector.detect(frame, tracking=tracking, confidence=confidence)
                 if tracking and self.counter is not None:
                     self.counter.update(detections, frame_index)
                 self.last_frame_index = frame_index if tracking else None

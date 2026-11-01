@@ -92,7 +92,7 @@ class CountingWorkerTests(unittest.TestCase):
 
     def test_duplicate_frame_and_new_session_counting(self):
         positions = iter((15, 35, 15))
-        self.detector.detect = lambda frame, tracking: [vehicle(40, next(positions))]
+        self.detector.detect = lambda frame, tracking, confidence: [vehicle(40, next(positions))]
         summaries = []
         self.worker.result_ready.connect(lambda revision, result, counts: summaries.append(counts))
         line = ((0, 25), (96, 25))
@@ -119,7 +119,7 @@ class CountingGuiTests(unittest.TestCase):
     def test_counting_cards_stop_and_reset(self):
         self.window.preview_canvas.counting_line = [(0, 25), (96, 25)]
         self.window.preview_canvas.edit_changed.emit()
-        self.detector.detect = lambda frame, tracking: [vehicle(40, 15 + float(frame.mean()) * 4)]
+        self.detector.detect = lambda frame, tracking, confidence: [vehicle(40, 15 + float(frame.mean()) * 4)]
         self.detect_paused_frame()
         self.assertEqual(self.values(), ["0", "0", "0"])
         self.window.toggle_playback()

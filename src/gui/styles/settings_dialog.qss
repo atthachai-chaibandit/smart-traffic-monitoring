@@ -1,0 +1,10 @@
+QDialog#settingsDialog { background-color: #252533; }
+QDialog#settingsDialog QCheckBox { spacing: 10px; }
+QDialog#settingsDialog QLineEdit {
+    background-color: #181821;
+    border: 1px solid #555166;
+    border-radius: 6px;
+    padding: 6px;
+    selection-background-color: #6D5599;
+}
+QDialog#settingsDialog QLineEdit:focus { border-color: #A78BFA; }

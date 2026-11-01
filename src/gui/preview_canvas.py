@@ -32,6 +32,8 @@ class PreviewCanvas(QWidget):
         super().__init__()
         self.original_pixmap = QPixmap()
         self.detections = None
+        self.show_confidence = True
+        self.show_track_id = True
         # Store confirmed and draft points in source-image pixels, not widget pixels.
         self.roi_points = []
         self.counting_line = []
@@ -362,6 +364,14 @@ class PreviewCanvas(QWidget):
         self.detection_overlay.set_detections(detections)
         self.image_label.update()
 
+    def detection_label(self, detection):
+        text = detection["class_name"]
+        if self.show_confidence:
+            text += f' {detection["confidence"]:.2f}'
+        if self.show_track_id and detection.get("track_id") is not None:
+            text = f'ID {detection["track_id"]} · {text}'
+        return text
+
     def paint_detections(self, painter):
         if not self.detections or self.edit_mode is not None or self.original_pixmap.isNull():
             return
@@ -375,9 +385,7 @@ class PreviewCanvas(QWidget):
             end = self.image_to_preview((x2, y2))
             painter.setPen(QPen(QColor(VEHICLE_COLORS[detection["class_name"]]), 2))
             painter.drawRect(QRectF(start, end).normalized())
-            text = f'{detection["class_name"]} {detection["confidence"]:.2f}'
-            if detection.get("track_id") is not None:
-                text = f'ID {detection["track_id"]} · {text}'
+            text = self.detection_label(detection)
             rect = self.image_rect()
             left = max(rect.left(), min(start.x(), rect.right() - metrics.horizontalAdvance(text)))
             baseline = max(rect.top() + metrics.ascent(), start.y() - 4)
