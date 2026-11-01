@@ -1,8 +1,11 @@
 
 from PyQt6.QtCore import QEvent, QPoint, Qt
-from PyQt6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
+    QSlider, QVBoxLayout, QWidget,
+)
 
-from .icons import get_pixmap
+from .icons import get_pixmap, set_button_icon
 
 
 class DetectionOverlay(QFrame):
@@ -48,6 +51,17 @@ class DetectionOverlay(QFrame):
             header.addWidget(child)
 
         header.addStretch()
+
+        # The button handles its own clicks instead of starting a header drag.
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("overlaySettingsButton")
+        self.settings_btn.setFixedSize(22, 22)
+        self.settings_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.setToolTip("Background opacity")
+        self.settings_btn.setAccessibleName("Overlay background opacity settings")
+        set_button_icon(self.settings_btn, "adjustments-horizontal", "#9CA3AF", 16)
+        header.addWidget(self.settings_btn)
         layout.addWidget(self.drag_header)
 
         # Detection Caption
@@ -56,10 +70,10 @@ class DetectionOverlay(QFrame):
         layout.addWidget(caption)
 
         # Section Separator
-        separator = QFrame()
-        separator.setObjectName("separator")
-        separator.setFixedHeight(1)
-        layout.addWidget(separator)
+        self.separator = QFrame()
+        self.separator.setObjectName("separator")
+        self.separator.setFixedHeight(1)
+        layout.addWidget(self.separator)
 
         # Detection Grid Layout
         rows = QGridLayout()
@@ -97,12 +111,67 @@ class DetectionOverlay(QFrame):
 
         layout.addLayout(rows)
 
+        # A popup closes on Escape or a click outside it, without changing layout.
+        self.opacity_popup = QFrame(
+            self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+        )
+        self.opacity_popup.setObjectName("overlayOpacityPopup")
+        self.opacity_popup.setFixedWidth(220)
+        popup_layout = QVBoxLayout(self.opacity_popup)
+        popup_layout.setContentsMargins(12, 12, 12, 12)
+        popup_layout.setSpacing(8)
+        popup_heading = QHBoxLayout()
+        popup_heading.addWidget(QLabel("Background opacity"))
+        popup_heading.addStretch()
+        self.opacity_value = QLabel()
+        self.opacity_value.setObjectName("mutedText")
+        popup_heading.addWidget(self.opacity_value)
+        popup_layout.addLayout(popup_heading)
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(85)
+        self.opacity_slider.setAccessibleName("Overlay background opacity")
+        popup_layout.addWidget(self.opacity_slider)
+        self.settings_btn.clicked.connect(self.show_opacity_popup)
+        self.opacity_slider.valueChanged.connect(self.set_background_opacity)
+        self.set_background_opacity(self.opacity_slider.value())
+
         # Initial Overlay Position
         self.move(self.MARGIN, self.MARGIN)
 
         # Monitor Header Mouse Events and Preview Resize Events
         self.drag_header.installEventFilter(self)
         parent.installEventFilter(self)
+
+    def show_opacity_popup(self):
+        if self.opacity_popup.isVisible():
+            self.opacity_popup.hide()
+            return
+
+        self.opacity_popup.adjustSize()
+        point = self.settings_btn.mapToGlobal(QPoint(
+            self.settings_btn.width() - self.opacity_popup.width(),
+            self.settings_btn.height() + 6,
+        ))
+        bounds = self.screen().availableGeometry()
+        point.setX(max(bounds.left(), min(point.x(), bounds.right() - self.opacity_popup.width() + 1)))
+        point.setY(max(bounds.top(), min(point.y(), bounds.bottom() - self.opacity_popup.height() + 1)))
+        self.opacity_popup.move(point)
+        self.opacity_popup.show()
+        self.opacity_slider.setFocus()
+
+    def set_background_opacity(self, value):
+        self.opacity_value.setText(f"{value}%")
+        alpha = round(255 * value / 100)
+        border = "border-color: transparent;" if value == 0 else ""
+        # Scope the alpha to the frame: text, icons and popup stay fully opaque.
+        self.setStyleSheet(
+            "QFrame#detectionOverlay {"
+            f"background-color: rgba(37, 37, 51, {alpha}); {border}"
+            "}"
+        )
+        # Hide the separator without removing its space or shifting the rows.
+        self.separator.setStyleSheet("background: transparent;" if value == 0 else "")
 
     def keep_inside_preview(self):
         # Calculate Overlay Movement Boundaries
