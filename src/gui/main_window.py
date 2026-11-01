@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         panel.apply_roi_btn.clicked.connect(self.finish_roi)
         panel.cancel_roi_btn.clicked.connect(self.preview_canvas.cancel_roi)
         panel.undo_btn.clicked.connect(self.preview_canvas.undo_roi_point)
+        panel.redo_btn.clicked.connect(self.preview_canvas.redo_roi_point)
         panel.reset_roi_btn.clicked.connect(self.preview_canvas.clear_roi)
         panel.mask_checkbox.toggled.connect(self.refresh_preview)
         self.preview_canvas.roi_changed.connect(self.on_roi_changed)
@@ -143,7 +144,9 @@ class MainWindow(QMainWindow):
         # Window shortcuts still work after using a control outside the image.
         self.roi_shortcuts = []
         for key, handler in (("Return", self.finish_roi), ("Enter", self.finish_roi),
-                             ("Escape", self.preview_canvas.cancel_roi)):
+                             ("Escape", self.preview_canvas.cancel_roi),
+                             ("Ctrl+Z", self.preview_canvas.undo_roi_point),
+                             ("Ctrl+Y", self.preview_canvas.redo_roi_point)):
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(handler)
             self.roi_shortcuts.append(shortcut)
@@ -282,7 +285,7 @@ class MainWindow(QMainWindow):
         canvas.detection_overlay.setVisible(not editing)
         self.control_panel.set_roi_controls(
             self.raw_frame is not None, editing, bool(canvas.draft_points),
-            bool(canvas.roi_points), canvas.can_apply_roi()
+            bool(canvas.roi_points), canvas.can_apply_roi(), bool(canvas.redo_points)
         )
         for shortcut in self.roi_shortcuts:
             shortcut.setEnabled(editing)

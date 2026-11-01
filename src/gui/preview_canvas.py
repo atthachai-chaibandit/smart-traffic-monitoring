@@ -31,6 +31,7 @@ class PreviewCanvas(QWidget):
         # Store confirmed and draft points in source-image pixels, not widget pixels.
         self.roi_points = []
         self.draft_points = []
+        self.redo_points = []
         self.editing_roi = False
         self.setup_ui()
 
@@ -233,6 +234,7 @@ class PreviewCanvas(QWidget):
             return
         # Keep the confirmed polygon until the replacement is accepted.
         self.draft_points = []
+        self.redo_points = []
         self.editing_roi = True
         self.image_label.setCursor(Qt.CursorShape.CrossCursor)
         self.image_label.setFocus()
@@ -259,13 +261,19 @@ class PreviewCanvas(QWidget):
 
     def cancel_roi(self):
         self.draft_points = []
+        self.redo_points = []
         self.editing_roi = False
         self.image_label.unsetCursor()
         self.roi_changed.emit()
 
     def undo_roi_point(self):
         if self.editing_roi and self.draft_points:
-            self.draft_points.pop()
+            self.redo_points.append(self.draft_points.pop())
+            self.roi_changed.emit()
+
+    def redo_roi_point(self):
+        if self.editing_roi and self.redo_points:
+            self.draft_points.append(self.redo_points.pop())
             self.roi_changed.emit()
 
     def clear_roi(self):
@@ -350,6 +358,8 @@ class PreviewCanvas(QWidget):
                 point = self.preview_to_image(event.position())
                 if point is not None and point not in self.draft_points:
                     self.draft_points.append(point)
+                    # A new point starts a different history after Undo.
+                    self.redo_points.clear()
                     self.roi_changed.emit()
                 return True
         # Adjust Empty State Spacing When Preview Resizes

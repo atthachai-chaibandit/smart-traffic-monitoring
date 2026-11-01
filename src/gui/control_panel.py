@@ -158,6 +158,17 @@ class ControlPanel(QFrame):
         roi_row.addWidget(self.cancel_roi_btn, 1)
         layout.addLayout(roi_row)
 
+        # Point history is only shown while drawing a replacement ROI.
+        self.undo_btn = self.make_button("Undo Point", "secondaryButton")
+        self.redo_btn = self.make_button("Redo Point", "secondaryButton")
+        self.undo_btn.setToolTip("Undo point (Ctrl+Z)")
+        self.redo_btn.setToolTip("Redo point (Ctrl+Y)")
+        edit_row = QHBoxLayout()
+        edit_row.setSpacing(8)
+        edit_row.addWidget(self.undo_btn)
+        edit_row.addWidget(self.redo_btn)
+        layout.addLayout(edit_row)
+
         # ROI Background Mask
         mask_row = QHBoxLayout()
         mask_labels = QVBoxLayout()
@@ -182,6 +193,9 @@ class ControlPanel(QFrame):
         mask_row.addWidget(self.mask_checkbox)
         layout.addLayout(mask_row)
 
+        self.reset_roi_btn = self.make_button("Reset ROI", "secondaryButton")
+        layout.addWidget(self.reset_roi_btn)
+
         self.add_separator(layout, compact=True)
 
         # Video Counting Section
@@ -192,21 +206,6 @@ class ControlPanel(QFrame):
             "Draw Counting Line", "roadButton", "line"
         )
         layout.addWidget(self.counting_line_btn)
-
-        # ROI Editing Buttons
-        edit_row = QHBoxLayout()
-        edit_row.setSpacing(8)
-
-        self.undo_btn = self.make_button(
-            "Undo Point", "secondaryButton"
-        )
-        self.reset_roi_btn = self.make_button(
-            "Reset ROI", "secondaryButton"
-        )
-
-        edit_row.addWidget(self.undo_btn)
-        edit_row.addWidget(self.reset_roi_btn)
-        layout.addLayout(edit_row)
 
         self.add_separator(layout)
 
@@ -248,15 +247,20 @@ class ControlPanel(QFrame):
         self.original_btn.setEnabled(available)
         self.enhanced_btn.setEnabled(enabled)
 
-    def set_roi_controls(self, available, editing, has_points, has_roi, can_apply=False):
+    def set_roi_controls(self, available, editing, has_points, has_roi,
+                         can_apply=False, can_redo=False):
         # Replace Draw/Edit with Apply and Cancel in the same row while editing.
         self.roi_btn.setVisible(not editing)
         self.roi_btn.setEnabled(available and not editing)
         self.apply_roi_btn.setVisible(editing)
         self.apply_roi_btn.setEnabled(editing and can_apply)
         self.cancel_roi_btn.setVisible(editing)
+        self.undo_btn.setVisible(editing)
         self.undo_btn.setEnabled(editing and has_points)
-        self.reset_roi_btn.setEnabled(has_points or has_roi or editing)
+        self.redo_btn.setVisible(editing)
+        self.redo_btn.setEnabled(editing and can_redo)
+        self.reset_roi_btn.setVisible(has_roi and not editing)
+        self.reset_roi_btn.setEnabled(has_roi and not editing)
         self.mask_checkbox.setEnabled(has_roi and not editing)
 
     def _update_filename(self):
