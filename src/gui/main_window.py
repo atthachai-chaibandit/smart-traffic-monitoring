@@ -6,7 +6,7 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QImage, QImageReader, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout, QMainWindow, 
@@ -23,6 +23,8 @@ from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
     """Local media playback with image and continuous video detection."""
+
+    detect_frame_requested = pyqtSignal(object, int)
 
     def __init__(self):
         super().__init__()
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         # Keep at most one decoded frame waiting for its matching detection result.
         self._next_detection_frame = None
         self._active_detection_frame = None
+        self._active_detection_revision = None
         self._detection_requested = False
         self._detection_started = 0.0
 
@@ -61,8 +64,13 @@ class MainWindow(QMainWindow):
         
         # Initialize UI and Signals
         self.setup_ui()
-        self.detection_worker = DetectionWorker(self)
+        # Keep model execution on the same native thread for the app's lifetime.
+        self.detection_thread = QThread(self)
+        self.detection_worker = DetectionWorker()
+        self.detection_worker.moveToThread(self.detection_thread)
+        self.detection_thread.finished.connect(self.detection_worker.deleteLater)
         self.connect_signals()
+        self.detection_thread.start()
         self.update_edit_controls()
         
         # Center Window on Screen
@@ -164,7 +172,10 @@ class MainWindow(QMainWindow):
         panel.detect_btn.clicked.connect(self.run_detection)
         self.detection_worker.result_ready.connect(self.on_detection_result)
         self.detection_worker.failed.connect(self.on_detection_error)
-        self.detection_worker.finished.connect(self.on_detection_finished)
+        self.detection_worker.job_finished.connect(self.on_detection_finished)
+        self.detect_frame_requested.connect(
+            self.detection_worker.detect_frame, Qt.ConnectionType.QueuedConnection
+        )
 
         # Window shortcuts still work after using a control outside the image.
         self.edit_shortcuts = []
@@ -320,7 +331,7 @@ class MainWindow(QMainWindow):
         if self._next_detection_frame is None:
             self._next_detection_frame = (self.raw_frame, self.current_frame)
         # Resume must not submit the same in-flight frame twice.
-        if (self._detection_busy and self.detection_worker.revision == self._detection_revision
+        if (self._detection_busy and self._active_detection_revision == self._detection_revision
                 and self._active_detection_frame is self._next_detection_frame):
             return
         self._detection_requested = True
@@ -340,12 +351,11 @@ class MainWindow(QMainWindow):
             frame = brighten_frame(frame, panel.brightness_slider.value())
         if canvas.roi_points:
             frame = mask_outside_roi(frame, canvas.roi_points)
-        self.detection_worker.frame = frame
-        self.detection_worker.revision = self._detection_revision
+        self._active_detection_revision = self._detection_revision
         self._detection_busy = True
         self._detection_requested = False
         self.update_edit_controls()
-        self.detection_worker.start()
+        self.detect_frame_requested.emit(frame, self._active_detection_revision)
 
     def on_detection_result(self, revision, detections):
         if revision == self._detection_revision and not self._closing:
@@ -366,8 +376,8 @@ class MainWindow(QMainWindow):
 
     def on_detection_finished(self):
         self._detection_busy = False
-        self.detection_worker.frame = None
         self._active_detection_frame = None
+        self._active_detection_revision = None
         if self._closing:
             self.close()
         else:
@@ -631,9 +641,12 @@ class MainWindow(QMainWindow):
         self._closing = True
         self.invalidate_detection()
         self.stop_current_video()
-        if self.detection_worker.isRunning():
-            # Let the current inference finish before destroying its QThread.
+        if self._detection_busy:
+            # The last job calls close again when model execution has finished.
             self.hide()
             event.ignore()
             return
+        # No model job is pending, so the idle event loop can stop safely.
+        self.detection_thread.quit()
+        self.detection_thread.wait()
         super().closeEvent(event)
