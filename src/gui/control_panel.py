@@ -23,6 +23,7 @@ class ControlPanel(QFrame):
         self.set_enhancement_available(False)
         self.set_roi_controls(False, False, False, False)
         self.set_line_controls(False, False, False, False)
+        self.set_detection_state(False, False)
 
     def setup_ui(self):
         # Main Layout
@@ -300,6 +301,10 @@ class ControlPanel(QFrame):
         self.line_redo_btn.setEnabled(editing and can_redo)
         self.reset_line_btn.setVisible(has_line and not editing)
         self.reset_line_btn.setEnabled(available and has_line and not editing)
+
+    def set_detection_state(self, available, busy):
+        self.detect_btn.setEnabled(available and not busy)
+        self.detect_btn.setText("Detecting..." if busy else "Run Detection")
 
     def _update_filename(self):
         text = self._filename or "No file selected"

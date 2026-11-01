@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, Q
 from .icons import get_pixmap, set_button_icon
 from .detection_overlay import DetectionOverlay
 from .media_formats import SUPPORTED_FILE_FORMATS
+from ..detector import VEHICLE_COLORS
 
 
 class PreviewImageLabel(QLabel):
@@ -18,6 +19,7 @@ class PreviewImageLabel(QLabel):
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
+        self.canvas.paint_detections(painter)
         self.canvas.paint_roi(painter)
         self.canvas.paint_counting_line(painter)
         painter.end()
@@ -29,6 +31,7 @@ class PreviewCanvas(QWidget):
     def __init__(self):
         super().__init__()
         self.original_pixmap = QPixmap()
+        self.detections = None
         # Store confirmed and draft points in source-image pixels, not widget pixels.
         self.roi_points = []
         self.counting_line = []
@@ -219,6 +222,7 @@ class PreviewCanvas(QWidget):
         self.mode_label.setText(mode)
 
     def clear_media(self):
+        self.set_detections(None)
         self.clear_annotations()
         self.set_preview_mode("")
         self.original_pixmap = QPixmap()
@@ -343,6 +347,30 @@ class PreviewCanvas(QWidget):
         else:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolygon(polygon)
+
+    def set_detections(self, detections):
+        self.detections = detections
+        self.detection_overlay.set_detections(detections)
+        self.image_label.update()
+
+    def paint_detections(self, painter):
+        if not self.detections or self.edit_mode is not None or self.original_pixmap.isNull():
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(self.image_rect())
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        metrics = painter.fontMetrics()
+        for detection in self.detections:
+            x1, y1, x2, y2 = detection["box"]
+            start = self.image_to_preview((x1, y1))
+            end = self.image_to_preview((x2, y2))
+            painter.setPen(QPen(QColor(VEHICLE_COLORS[detection["class_name"]]), 2))
+            painter.drawRect(QRectF(start, end).normalized())
+            text = f'{detection["class_name"]} {detection["confidence"]:.2f}'
+            rect = self.image_rect()
+            left = max(rect.left(), min(start.x(), rect.right() - metrics.horizontalAdvance(text)))
+            baseline = max(rect.top() + metrics.ascent(), start.y() - 4)
+            painter.drawText(QPointF(left, baseline), text)
 
     def paint_counting_line(self, painter):
         if self.original_pixmap.isNull():

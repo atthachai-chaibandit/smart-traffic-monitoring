@@ -173,13 +173,20 @@ class DetectionOverlay(QFrame):
         # Hide the separator without removing its space or shifting the rows.
         self.separator.setStyleSheet("background: transparent;" if value == 0 else "")
 
+    def set_detections(self, detections):
+        counts = dict.fromkeys(self.values, 0)
+        if detections is not None:
+            for detection in detections:
+                counts[detection["class_name"]] += 1
+        for name, label in self.values.items():
+            label.setText("\u2014" if detections is None else str(counts[name]))
+
     def reset_state(self):
         self.opacity_popup.hide()
         self._drag_offset = None
         self.drag_header.setCursor(Qt.CursorShape.OpenHandCursor)
         self.opacity_slider.setValue(85)
-        for label in self.values.values():
-            label.setText("\u2014")
+        self.set_detections(None)
         self.move(self.MARGIN, self.MARGIN)
         self.keep_inside_preview()
 

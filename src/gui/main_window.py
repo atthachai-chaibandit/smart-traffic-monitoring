@@ -17,10 +17,11 @@ from .app_title import AppTitle
 from .control_panel import ControlPanel
 from .preview_canvas import PreviewCanvas
 from .media_formats import SUPPORTED_FILE_FORMATS
+from .detection_worker import DetectionWorker
 from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
-    """Local media selection and preview; detection is not connected yet."""
+    """Local media preview and single-frame vehicle detection."""
 
     def __init__(self):
         super().__init__()
@@ -31,6 +32,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 580)
         self.media_path = None
         self.raw_frame = None
+        self._detection_revision = 0
+        self._detection_busy = False
+        self._detection_roi = ()
+        self._closing = False
 
         # Keep one decoder and one timer for the selected video.
         self.capture = None
@@ -47,6 +52,7 @@ class MainWindow(QMainWindow):
         
         # Initialize UI and Signals
         self.setup_ui()
+        self.detection_worker = DetectionWorker(self)
         self.connect_signals()
         self.update_edit_controls()
         
@@ -128,7 +134,7 @@ class MainWindow(QMainWindow):
         # Enhancement redraws the stored frame without advancing the decoder.
         panel = self.control_panel
         panel.enhance_checkbox.toggled.connect(self.on_enhancement_toggled)
-        panel.brightness_slider.valueChanged.connect(self.refresh_preview)
+        panel.brightness_slider.valueChanged.connect(self.on_brightness_changed)
         panel.original_btn.clicked.connect(self.refresh_preview)
         panel.enhanced_btn.clicked.connect(self.refresh_preview)
 
@@ -146,6 +152,10 @@ class MainWindow(QMainWindow):
         panel.reset_line_btn.clicked.connect(self.preview_canvas.clear_counting_line)
         panel.mask_checkbox.toggled.connect(self.refresh_preview)
         self.preview_canvas.edit_changed.connect(self.on_edit_changed)
+        panel.detect_btn.clicked.connect(self.run_detection)
+        self.detection_worker.result_ready.connect(self.on_detection_result)
+        self.detection_worker.failed.connect(self.on_detection_error)
+        self.detection_worker.finished.connect(self.on_detection_finished)
 
         # Window shortcuts still work after using a control outside the image.
         self.edit_shortcuts = []
@@ -215,6 +225,7 @@ class MainWindow(QMainWindow):
 
         # Keep the previous file and preview intact until decoding succeeds.
         self.stop_current_video()
+        self.invalidate_detection()
         self.raw_frame = None
         self.preview_canvas.clear_annotations()
         self.capture = capture
@@ -241,17 +252,65 @@ class MainWindow(QMainWindow):
         return cv2.cvtColor(rgb_pixels, cv2.COLOR_RGB2BGR)
 
     def on_enhancement_toggled(self, enabled):
+        self.invalidate_detection()
         panel = self.control_panel
         button = panel.enhanced_btn if enabled else panel.original_btn
         button.setChecked(True)
         panel.set_enhancement_available(self.raw_frame is not None)
         self.refresh_preview()
 
+    def on_brightness_changed(self):
+        if self.control_panel.enhance_checkbox.isChecked():
+            self.invalidate_detection()
+        self.refresh_preview()
+
+    def invalidate_detection(self):
+        # Ignore in-flight results after their source frame or settings change.
+        self._detection_revision += 1
+        self.preview_canvas.set_detections(None)
+
+    def run_detection(self):
+        canvas = self.preview_canvas
+        if self.raw_frame is None or self._detection_busy or self._seeking or canvas.edit_mode is not None:
+            return
+        self.pause_video()
+        self.invalidate_detection()
+        frame = self.raw_frame.copy()
+        panel = self.control_panel
+        # Preview mode does not affect the pixels sent to the model.
+        if panel.enhance_checkbox.isChecked():
+            frame = brighten_frame(frame, panel.brightness_slider.value())
+        if canvas.roi_points:
+            frame = mask_outside_roi(frame, canvas.roi_points)
+        self.detection_worker.frame = frame
+        self.detection_worker.revision = self._detection_revision
+        self._detection_busy = True
+        self.update_edit_controls()
+        self.detection_worker.start()
+
+    def on_detection_result(self, revision, detections):
+        if revision == self._detection_revision and not self._closing:
+            self.preview_canvas.set_detections(detections)
+
+    def on_detection_error(self, revision, message):
+        if revision == self._detection_revision and not self._closing:
+            QMessageBox.warning(self, "Detection error", message)
+
+    def on_detection_finished(self):
+        self._detection_busy = False
+        self.detection_worker.frame = None
+        if self._closing:
+            self.close()
+        else:
+            self.update_edit_controls()
+
     def refresh_preview(self):
         if self.raw_frame is not None:
             self.display_frame(self.raw_frame)
 
     def display_frame(self, frame):
+        if frame is not self.raw_frame:
+            self.invalidate_detection()
         # Always process the raw frame so repeated adjustments do not accumulate.
         panel = self.control_panel
         shown = frame
@@ -277,6 +336,7 @@ class MainWindow(QMainWindow):
         if self.raw_frame is None or self._seeking or self.preview_canvas.edit_mode is not None:
             return
         self.pause_video()
+        self.invalidate_detection()
         self.preview_canvas.begin_edit("roi")
 
     def begin_counting_line(self):
@@ -286,6 +346,10 @@ class MainWindow(QMainWindow):
         self.preview_canvas.begin_edit("line")
 
     def on_edit_changed(self):
+        roi = tuple(self.preview_canvas.roi_points)
+        if roi != self._detection_roi:
+            self._detection_roi = roi
+            self.invalidate_detection()
         self.update_edit_controls()
         self.refresh_preview()
         self.preview_canvas.image_label.update()
@@ -293,6 +357,10 @@ class MainWindow(QMainWindow):
     def update_edit_controls(self):
         canvas = self.preview_canvas
         editing = canvas.edit_mode is not None
+        self.control_panel.set_detection_state(
+            self.raw_frame is not None and not editing and not self._closing,
+            self._detection_busy,
+        )
         # Keep the whole image available for placing points while editing.
         canvas.detection_overlay.setVisible(not editing)
         self.control_panel.set_roi_controls(
@@ -330,6 +398,7 @@ class MainWindow(QMainWindow):
         if self.at_end and not self.reset_video():
             return
 
+        self.invalidate_detection()
         self.playback_timer.start(max(1, round(1000 / self.fps)))
         self.preview_canvas.set_playing(True)
 
@@ -440,6 +509,7 @@ class MainWindow(QMainWindow):
 
     def clear_media(self):
         self.stop_current_video()
+        self.invalidate_detection()
         self.media_path = None
         self.raw_frame = None
         self.preview_canvas.clear_media()
@@ -448,5 +518,12 @@ class MainWindow(QMainWindow):
         self.centralWidget().setFocus()
 
     def closeEvent(self, event):
+        self._closing = True
+        self.invalidate_detection()
         self.stop_current_video()
+        if self.detection_worker.isRunning():
+            # Let the current inference finish before destroying its QThread.
+            self.hide()
+            event.ignore()
+            return
         super().closeEvent(event)

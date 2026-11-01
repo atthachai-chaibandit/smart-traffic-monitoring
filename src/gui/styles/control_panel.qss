@@ -33,6 +33,7 @@ QPushButton#primaryButton {
 }
 QPushButton#primaryButton:hover { background-color: #BDA6FF; }
 QPushButton#primaryButton:pressed { background-color: #9372E6; }
+QPushButton#primaryButton:disabled { background-color: #514968; color: #A6A1B1; }
 QPushButton#viewChip {
     background-color: #3A3A49;
     color: #E9E9F2;
