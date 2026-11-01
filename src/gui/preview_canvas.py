@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayou
 
 from .icons import get_pixmap, set_button_icon
 from .detection_overlay import DetectionOverlay
-
+from .media_formats import SUPPORTED_FILE_FORMATS
 
 class PreviewCanvas(QWidget):
     def __init__(self):
@@ -57,7 +57,8 @@ class PreviewCanvas(QWidget):
         empty.addWidget(title)
 
         # Upload Placeholder Hint
-        hint = QLabel("Choose a file to start processing")
+        formats = ", ".join(SUPPORTED_FILE_FORMATS.values())
+        hint = QLabel(f"Choose a file to start processing ({formats})")
         hint.setObjectName("mutedText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.addWidget(hint)
