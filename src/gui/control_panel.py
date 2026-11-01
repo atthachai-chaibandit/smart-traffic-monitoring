@@ -1,8 +1,10 @@
 ﻿
+from pathlib import Path
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QSlider, QVBoxLayout,
+    QPushButton, QSizePolicy, QSlider, QVBoxLayout,
 )
 
 from .icons import get_pixmap, set_button_icon
@@ -10,12 +12,13 @@ from .icons import get_pixmap, set_button_icon
 BRIGHT_STRENGTH = 50
 
 class ControlPanel(QFrame):
-    """Input widgets only; no media, ROI or detection handlers are attached."""
+    """Control widgets and selected file display; no processing handlers."""
 
     def __init__(self):
         super().__init__()
 
         self.setObjectName("controlPanel")
+        self._filename = ""
         self.setup_ui()
 
     def setup_ui(self):
@@ -61,6 +64,13 @@ class ControlPanel(QFrame):
 
         self.upload_btn.setFixedHeight(50)
         layout.addWidget(self.upload_btn)
+
+        # Keep long file names from widening the control panel.
+        self.filename_label = self.muted_label("No file selected")
+        self.filename_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        layout.addWidget(self.filename_label)
         self.add_separator(layout)
 
         # Enhancement Section
@@ -189,6 +199,21 @@ class ControlPanel(QFrame):
         )
         layout.addWidget(self.detect_btn)
         layout.addStretch(1)
+
+    def set_filename(self, path):
+        self._filename = Path(path).name
+        self.filename_label.setToolTip(str(path))
+        self._update_filename()
+
+    def _update_filename(self):
+        text = self._filename or "No file selected"
+        self.filename_label.setText(self.filename_label.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, self.filename_label.width()
+        ))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_filename()
 
     @staticmethod
     def muted_label(text):
