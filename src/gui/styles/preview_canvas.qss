@@ -11,6 +11,10 @@ QFrame#playbackBar, QFrame#statCard {
 }
 QLabel#statValue { font-size: 22px; font-weight: 600; }
 QPushButton#playButton { border: 1px solid #A78BFA; border-radius: 14px; }
+QPushButton#playButton:disabled { border-color: #555166; }
+QSlider#timelineSlider::groove:horizontal:disabled { background: #393946; }
+QSlider#timelineSlider::sub-page:horizontal:disabled { background: #555166; }
+QSlider#timelineSlider::handle:horizontal:disabled { background: #6B667D; }
 
 QFrame#detectionOverlay {
     border: 1px solid #464655;

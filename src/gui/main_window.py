@@ -35,6 +35,8 @@ class MainWindow(QMainWindow):
         self.current_frame = 0
         self.total_frames = 0
         self.at_end = False
+        self._seeking = False
+        self._resume_after_seek = False
         self.playback_timer = QTimer(self)
         self.playback_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.playback_timer.timeout.connect(self.read_next_frame)
@@ -110,8 +112,14 @@ class MainWindow(QMainWindow):
     def connect_signals(self):
         # Connect Upload Button to File Dialog
         self.control_panel.upload_btn.clicked.connect(self.browse_media)
+        self.control_panel.clear_btn.clicked.connect(self.clear_media)
         self.preview_canvas.play_btn.clicked.connect(self.toggle_playback)
         self.preview_canvas.reset_btn.clicked.connect(self.reset_video)
+        timeline = self.preview_canvas.timeline_slider
+        timeline.sliderPressed.connect(self.begin_seek)
+        timeline.sliderMoved.connect(self.preview_seek_time)
+        timeline.sliderReleased.connect(self.finish_seek)
+        timeline.valueChanged.connect(self.seek_from_slider)
         
     def browse_media(self):
         # Generate Supported Media File Filter
@@ -179,6 +187,7 @@ class MainWindow(QMainWindow):
         self.media_path = source
         self.preview_canvas.set_video_mode(capture is not None)
         if capture is not None:
+            self.preview_canvas.configure_timeline(self.total_frames, self.fps)
             self.update_playback_time()
 
     @staticmethod
@@ -191,7 +200,7 @@ class MainWindow(QMainWindow):
         ).copy()
 
     def toggle_playback(self):
-        if self.capture is None:
+        if self.capture is None or self._seeking:
             return
         if self.playback_timer.isActive():
             self.pause_video()
@@ -229,26 +238,63 @@ class MainWindow(QMainWindow):
         self.update_playback_time()
 
     def reset_video(self):
+        # Reset rewinds the video without clearing ROI or overlay preferences.
+        return self.seek_video(0)
+
+    def seek_video(self, frame_index):
         if self.capture is None:
             return False
         self.pause_video()
+        frame_index = max(0, min(frame_index, self.total_frames - 1)) if self.total_frames else 0
         try:
-            if not self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0):
-                raise ValueError("Could not return to the first video frame.")
+            if not self.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index):
+                raise ValueError("Could not seek to the selected video frame.")
             ok, frame = self.capture.read()
             if not ok or frame is None:
-                raise ValueError("Could not read the first video frame.")
+                raise ValueError("Could not read the selected video frame.")
             image = self.frame_to_image(frame)
         except (ValueError, cv2.error) as error:
+            # Restore the displayed position and remain paused if seeking fails.
+            self.update_playback_time()
             self.at_end = True
-            QMessageBox.warning(self, "Unable to reset video", str(error))
+            QMessageBox.warning(self, "Unable to seek video", str(error))
             return False
 
-        self.current_frame = 0
+        self.current_frame = frame_index
         self.at_end = False
         self.preview_canvas.show_image(image)
         self.update_playback_time()
         return True
+
+    def begin_seek(self):
+        if self.capture is None or self.total_frames <= 0:
+            return
+        self._resume_after_seek = self.playback_timer.isActive()
+        self._seeking = True
+        self.pause_video()
+
+    def preview_seek_time(self, frame_index):
+        if self._seeking:
+            self.preview_canvas.set_playback_time(
+                frame_index / self.fps, self.total_frames / self.fps
+            )
+
+    def finish_seek(self):
+        if not self._seeking:
+            return
+        resume = self._resume_after_seek
+        self._seeking = False
+        self._resume_after_seek = False
+        if self.seek_video(self.preview_canvas.timeline_slider.value()) and resume:
+            self.toggle_playback()
+
+    def seek_from_slider(self, frame_index):
+        # Arrow keys and track clicks seek immediately; dragging seeks on release.
+        if self._seeking or self.capture is None or self.total_frames <= 0:
+            return
+        resume = self.playback_timer.isActive()
+        if self.seek_video(frame_index) and resume:
+            self.toggle_playback()
 
     def update_playback_time(self):
         # Frame-based timestamps pause with the video instead of using wall time.
@@ -257,6 +303,7 @@ class MainWindow(QMainWindow):
         if duration is not None:
             elapsed = min(elapsed, duration)
         self.preview_canvas.set_playback_time(elapsed, duration)
+        self.preview_canvas.set_timeline_position(self.current_frame)
 
     def stop_current_video(self):
         self.pause_video()
@@ -266,7 +313,18 @@ class MainWindow(QMainWindow):
         self.current_frame = 0
         self.total_frames = 0
         self.at_end = False
+        self.fps = 30.0
+        self._seeking = False
+        self._resume_after_seek = False
         self.preview_canvas.set_video_mode(False)
+
+    def clear_media(self):
+        self.stop_current_video()
+        self.media_path = None
+        self.preview_canvas.clear_media()
+        self.control_panel.reset_controls()
+        self.controls_scroll.verticalScrollBar().setValue(0)
+        self.centralWidget().setFocus()
 
     def closeEvent(self, event):
         self.stop_current_video()

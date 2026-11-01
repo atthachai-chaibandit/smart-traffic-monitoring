@@ -16,6 +16,15 @@ QPushButton#roadButton {
 QPushButton#roadButton:hover { background-color: #49435E; border-color: #A78BFA; }
 QPushButton#roadButton:pressed { background-color: #5B497C; }
 QPushButton#secondaryButton { background-color: #39394D; }
+QPushButton#clearMediaButton {
+    background-color: #252533;
+    color: #F87171;
+    border: 1px solid #F87171;
+    border-radius: 6px;
+    padding: 0 6px;
+}
+QPushButton#clearMediaButton:hover { background-color: #3D2934; }
+QPushButton#clearMediaButton:pressed { background-color: #55303D; }
 QPushButton#primaryButton {
     background-color: #A78BFA;
     color: #15111E;

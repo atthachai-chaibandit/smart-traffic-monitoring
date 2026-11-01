@@ -1,7 +1,7 @@
 ﻿
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QSignalBlocker, Qt
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from .icons import get_pixmap, set_button_icon
 from .detection_overlay import DetectionOverlay
@@ -102,6 +102,12 @@ class PreviewCanvas(QWidget):
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setObjectName("mutedText")
 
+        # Use frame indices so arrow keys can move one frame at a time.
+        self.timeline_slider = QSlider(Qt.Orientation.Horizontal)
+        self.timeline_slider.setObjectName("timelineSlider")
+        self.timeline_slider.setAccessibleName("Video timeline")
+        self.timeline_slider.setSingleStep(1)
+
         # Reset and Fullscreen Buttons
         self.reset_btn = self.icon_button("refresh", "Reset video")
         self.fullscreen_btn = self.icon_button("maximize", "Fullscreen preview")
@@ -109,7 +115,7 @@ class PreviewCanvas(QWidget):
         # Add Playback Widgets
         playback.addWidget(self.play_btn)
         playback.addWidget(self.time_label)
-        playback.addStretch()
+        playback.addWidget(self.timeline_slider, 1)
         playback.addWidget(self.reset_btn)
         playback.addWidget(self.fullscreen_btn)
         layout.addWidget(self.playback)
@@ -140,6 +146,22 @@ class PreviewCanvas(QWidget):
         self.reset_btn.setEnabled(enabled)
         self.set_playing(False)
         self.time_label.setText("00:00 / --:--" if enabled else "\u2014 / \u2014")
+        with QSignalBlocker(self.timeline_slider):
+            self.timeline_slider.setSliderDown(False)
+            self.timeline_slider.setRange(0, 0)
+            self.timeline_slider.setValue(0)
+            self.timeline_slider.setEnabled(False)
+
+    def configure_timeline(self, total_frames, fps):
+        with QSignalBlocker(self.timeline_slider):
+            self.timeline_slider.setRange(0, max(0, total_frames - 1))
+            self.timeline_slider.setPageStep(max(1, round(fps)))
+            self.timeline_slider.setEnabled(total_frames > 1)
+
+    def set_timeline_position(self, frame_index):
+        # Playback updates must not trigger another seek through valueChanged.
+        with QSignalBlocker(self.timeline_slider):
+            self.timeline_slider.setValue(frame_index)
 
     def set_playing(self, playing):
         icon = "player-pause" if playing else "player-play"
@@ -167,6 +189,23 @@ class PreviewCanvas(QWidget):
         self.update_preview()
         self.detection_overlay.raise_()
 
+    def clear_media(self):
+        self.original_pixmap = QPixmap()
+        self.image_label.clear()
+        self.image_label.hide()
+        self.empty_state.show()
+        self.set_video_mode(False)
+        self.detection_overlay.reset_state()
+        for card in (self.total_card, self.in_card, self.out_card):
+            card.findChild(QLabel, "statValue").setText("\u2014")
+        self.update_empty_spacing()
+
+    def update_empty_spacing(self):
+        overlay = self.detection_overlay
+        narrow = self.preview.width() < 2 * (overlay.width() + overlay.MARGIN) + 34
+        top = overlay.height() + 2 * overlay.MARGIN if narrow else 16
+        self.preview.layout().setContentsMargins(16, top, 16, 16)
+
     def update_preview(self):
         if self.original_pixmap.isNull():
             return
@@ -189,12 +228,8 @@ class PreviewCanvas(QWidget):
         # Adjust Empty State Spacing When Preview Resizes
         if watched is self.preview and event.type() == QEvent.Type.Resize:
             if self.original_pixmap.isNull():
-                overlay = self.detection_overlay
-
                 # Keep the empty-state message below the overlay on narrow previews.
-                narrow = self.preview.width() < 2 * (overlay.width() + overlay.MARGIN) + 34
-                top = overlay.height() + 2 * overlay.MARGIN if narrow else 16
-                self.preview.layout().setContentsMargins(16, top, 16, 16)
+                self.update_empty_spacing()
             else:
                 self.update_preview()
 

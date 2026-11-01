@@ -70,7 +70,15 @@ class ControlPanel(QFrame):
         self.filename_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
         )
-        layout.addWidget(self.filename_label)
+        self.clear_btn = self.make_button("Clear", "clearMediaButton")
+        self.clear_btn.setFixedSize(48, 22)
+        self.clear_btn.setToolTip("Clear the selected media")
+        self.clear_btn.hide()
+        filename_row = QHBoxLayout()
+        filename_row.setSpacing(8)
+        filename_row.addWidget(self.filename_label, 1)
+        filename_row.addWidget(self.clear_btn)
+        layout.addLayout(filename_row)
         self.add_separator(layout)
 
         # Enhancement Section
@@ -203,7 +211,21 @@ class ControlPanel(QFrame):
     def set_filename(self, path):
         self._filename = Path(path).name
         self.filename_label.setToolTip(str(path))
+        self.clear_btn.show()
+        # Include the Clear button's width before shortening the file name.
+        self.layout().activate()
         self._update_filename()
+
+    def reset_controls(self):
+        self._filename = ""
+        self.filename_label.setToolTip("")
+        self.clear_btn.hide()
+        self.layout().activate()
+        self._update_filename()
+        self.enhance_checkbox.setChecked(False)
+        self.brightness_slider.setValue(BRIGHT_STRENGTH)
+        self.view_modes.buttons()[0].setChecked(True)
+        self.mask_checkbox.setChecked(True)
 
     def _update_filename(self):
         text = self._filename or "No file selected"
