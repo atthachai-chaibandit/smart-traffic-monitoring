@@ -1,10 +1,4 @@
-"""Image Processing ก่อนส่งภาพให้ YOLO
-
-1) CLAHE  - เพิ่มความคมชัดในส่วนมืด (เช่น วิดีโอกลางคืน) โดยไม่ทำให้ไฟหน้ารถจ้าขึ้น
-2) ROI Mask - ทำให้พื้นที่นอกถนนเป็นสีดำ กันไม่ให้ตรวจจับคนบนทางเท้า
-
-ทั้งสองแบบเปิด/ปิดได้ใน src/detection.py (--clahe / --roi) เพื่อทดลองเทียบผล
-"""
+"""Image processing for the GUI and standalone detection tools."""
 
 import cv2
 import numpy as np
@@ -79,6 +73,22 @@ class Preprocessor:
         """ชื่อโหมดสำหรับตั้งชื่อไฟล์ผลลัพธ์ เช่น "clahe_roi" หรือ "none" """
         parts = [p for p, on in (("clahe", self.use_clahe), ("roi", self.use_roi)) if on]
         return "_".join(parts) or "none"
+
+
+def brighten_frame(frame, strength):
+    """Add brightness to a BGR frame without changing its original pixels."""
+    strength = max(0, min(100, strength))
+    # Map the slider's strength to a pixel offset from 0 to 80.
+    offset = round(strength * 0.8)
+    return cv2.add(frame, (offset, offset, offset, 0))
+
+
+def mask_outside_roi(frame, points):
+    """Keep the polygon's pixels and make the surrounding area black."""
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    polygon = np.asarray(points, dtype=np.int32)
+    cv2.fillPoly(mask, [polygon], 255)
+    return cv2.bitwise_and(frame, frame, mask=mask)
 
 
 if __name__ == "__main__":

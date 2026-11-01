@@ -1,0 +1,10 @@
+﻿QWidget#appHeader {
+    border: none;
+    border-bottom: 1px solid #333340;
+}
+
+QLabel#appTitle { font-size: 16px; font-weight: 700; }
+
+QPushButton#settingsButton { background: transparent; padding: 0; }
+QPushButton#settingsButton:hover { background-color: #252533; }
+QPushButton#settingsButton:pressed { background-color: #393349; }
