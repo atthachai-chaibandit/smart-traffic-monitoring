@@ -103,7 +103,7 @@ class PreviewCanvas(QWidget):
         self.time_label.setObjectName("mutedText")
 
         # Reset and Fullscreen Buttons
-        self.reset_btn = self.icon_button("refresh", "Reset preview")
+        self.reset_btn = self.icon_button("refresh", "Reset video")
         self.fullscreen_btn = self.icon_button("maximize", "Fullscreen preview")
 
         # Add Playback Widgets
@@ -133,6 +133,32 @@ class PreviewCanvas(QWidget):
 
         self.counting_summary.setToolTip("Cumulative vehicle crossings at the counting line")
         layout.addWidget(self.counting_summary)
+        self.set_video_mode(False)
+
+    def set_video_mode(self, enabled):
+        self.play_btn.setEnabled(enabled)
+        self.reset_btn.setEnabled(enabled)
+        self.set_playing(False)
+        self.time_label.setText("00:00 / --:--" if enabled else "\u2014 / \u2014")
+
+    def set_playing(self, playing):
+        icon = "player-pause" if playing else "player-play"
+        label = "Pause video" if playing else "Play video"
+        set_button_icon(self.play_btn, icon, "#A78BFA", 20)
+        self.play_btn.setToolTip(label)
+        self.play_btn.setAccessibleName(label)
+
+    @staticmethod
+    def format_time(seconds):
+        if seconds is None:
+            return "--:--"
+        minutes, seconds = divmod(max(0, int(seconds)), 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def set_playback_time(self, elapsed, duration):
+        self.time_label.setText(
+            f"{self.format_time(elapsed)} / {self.format_time(duration)}"
+        )
 
     def show_image(self, image):
         self.original_pixmap = QPixmap.fromImage(image)

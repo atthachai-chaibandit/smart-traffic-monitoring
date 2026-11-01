@@ -173,6 +173,11 @@ class DetectionOverlay(QFrame):
         # Hide the separator without removing its space or shifting the rows.
         self.separator.setStyleSheet("background: transparent;" if value == 0 else "")
 
+    def hideEvent(self, event):
+        # Do not leave the popup open when the overlay or its parent window is hidden.
+        self.opacity_popup.hide()
+        super().hideEvent(event)
+
     def keep_inside_preview(self):
         # Calculate Overlay Movement Boundaries
         parent = self.parentWidget()
