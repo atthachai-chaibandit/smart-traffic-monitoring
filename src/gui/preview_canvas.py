@@ -1,16 +1,37 @@
 ﻿
-from PyQt6.QtCore import QEvent, QSignalBlocker, Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QEvent, QPointF, QRectF, QSignalBlocker, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget
 
 from .icons import get_pixmap, set_button_icon
 from .detection_overlay import DetectionOverlay
 from .media_formats import SUPPORTED_FILE_FORMATS
 
+
+class RoiImageLabel(QLabel):
+    """Draw the ROI over the displayed image without changing its pixels."""
+
+    def __init__(self, canvas):
+        super().__init__(canvas.preview)
+        self.canvas = canvas
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        self.canvas.paint_roi(painter)
+        painter.end()
+
+
 class PreviewCanvas(QWidget):
+    roi_changed = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.original_pixmap = QPixmap()
+        # Store confirmed and draft points in source-image pixels, not widget pixels.
+        self.roi_points = []
+        self.draft_points = []
+        self.editing_roi = False
         self.setup_ui()
 
     def setup_ui(self):
@@ -74,8 +95,10 @@ class PreviewCanvas(QWidget):
         layout.addWidget(self.preview, 1)
 
         # A child label avoids letting the source image's size affect the layout.
-        self.image_label = QLabel(self.preview)
+        self.image_label = RoiImageLabel(self)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.image_label.installEventFilter(self)
         self.image_label.hide()
 
         # Detection Overlay
@@ -193,6 +216,7 @@ class PreviewCanvas(QWidget):
         self.mode_label.setText(mode)
 
     def clear_media(self):
+        self.clear_roi()
         self.set_preview_mode("")
         self.original_pixmap = QPixmap()
         self.image_label.clear()
@@ -203,6 +227,98 @@ class PreviewCanvas(QWidget):
         for card in (self.total_card, self.in_card, self.out_card):
             card.findChild(QLabel, "statValue").setText("\u2014")
         self.update_empty_spacing()
+
+    def begin_roi(self):
+        if self.original_pixmap.isNull() or self.editing_roi:
+            return
+        # Keep the confirmed polygon until the replacement is accepted.
+        self.draft_points = []
+        self.editing_roi = True
+        self.image_label.setCursor(Qt.CursorShape.CrossCursor)
+        self.image_label.setFocus()
+        self.roi_changed.emit()
+
+    def can_apply_roi(self):
+        if not self.editing_roi or len(self.draft_points) < 3:
+            return False
+        # Reject points that form a line instead of an area.
+        points = self.draft_points
+        area_twice = sum(
+            x * points[(i + 1) % len(points)][1]
+            - y * points[(i + 1) % len(points)][0]
+            for i, (x, y) in enumerate(points)
+        )
+        return area_twice != 0
+
+    def finish_roi(self):
+        if not self.can_apply_roi():
+            return False
+        self.roi_points = list(self.draft_points)
+        self.cancel_roi()
+        return True
+
+    def cancel_roi(self):
+        self.draft_points = []
+        self.editing_roi = False
+        self.image_label.unsetCursor()
+        self.roi_changed.emit()
+
+    def undo_roi_point(self):
+        if self.editing_roi and self.draft_points:
+            self.draft_points.pop()
+            self.roi_changed.emit()
+
+    def clear_roi(self):
+        self.roi_points = []
+        self.cancel_roi()
+
+    def image_rect(self):
+        """Return the actual image bounds inside the centered label, in logical pixels."""
+        pixmap = self.image_label.pixmap()
+        if pixmap is None or pixmap.isNull():
+            return QRectF()
+        size = pixmap.deviceIndependentSize()
+        bounds = self.image_label.contentsRect()
+        return QRectF(
+            bounds.x() + int((bounds.width() - size.width()) / 2),
+            bounds.y() + int((bounds.height() - size.height()) / 2),
+            size.width(), size.height(),
+        )
+
+    def preview_to_image(self, position):
+        rect = self.image_rect()
+        if rect.isEmpty() or not rect.contains(position):
+            return None
+        width, height = self.original_pixmap.width(), self.original_pixmap.height()
+        x = round((position.x() - rect.x()) * width / rect.width())
+        y = round((position.y() - rect.y()) * height / rect.height())
+        return (max(0, min(x, width - 1)), max(0, min(y, height - 1)))
+
+    def image_to_preview(self, point):
+        rect = self.image_rect()
+        return QPointF(
+            rect.x() + point[0] * rect.width() / self.original_pixmap.width(),
+            rect.y() + point[1] * rect.height() / self.original_pixmap.height(),
+        )
+
+    def paint_roi(self, painter):
+        if self.original_pixmap.isNull():
+            return
+        points = self.draft_points if self.editing_roi else self.roi_points
+        if not points:
+            return
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(self.image_rect())
+        painter.setPen(QPen(QColor("#A78BFA"), 2))
+        polygon = QPolygonF([self.image_to_preview(point) for point in points])
+        if self.editing_roi:
+            painter.drawPolyline(polygon)
+            painter.setBrush(QColor("#A78BFA"))
+            for point in polygon:
+                painter.drawEllipse(point, 3, 3)
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolygon(polygon)
 
     def update_empty_spacing(self):
         overlay = self.detection_overlay
@@ -229,6 +345,13 @@ class PreviewCanvas(QWidget):
         self.image_label.setPixmap(pixmap)
 
     def eventFilter(self, watched, event):
+        if watched is self.image_label and self.editing_roi:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                point = self.preview_to_image(event.position())
+                if point is not None and point not in self.draft_points:
+                    self.draft_points.append(point)
+                    self.roi_changed.emit()
+                return True
         # Adjust Empty State Spacing When Preview Resizes
         if watched is self.preview and event.type() == QEvent.Type.Resize:
             if self.original_pixmap.isNull():

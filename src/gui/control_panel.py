@@ -21,6 +21,7 @@ class ControlPanel(QFrame):
         self._filename = ""
         self.setup_ui()
         self.set_enhancement_available(False)
+        self.set_roi_controls(False, False, False, False)
 
     def setup_ui(self):
         # Main Layout
@@ -147,7 +148,15 @@ class ControlPanel(QFrame):
         self.roi_btn = self.make_button(
             "Draw / Edit Road ROI", "roadButton", "road"
         )
-        layout.addWidget(self.roi_btn)
+        self.apply_roi_btn = self.make_button("Apply ROI", "roadButton", "circle-check")
+        self.cancel_roi_btn = self.make_button("Cancel", "secondaryButton")
+        self.cancel_roi_btn.setMinimumHeight(36)
+        roi_row = QHBoxLayout()
+        roi_row.setSpacing(8)
+        roi_row.addWidget(self.roi_btn, 2)
+        roi_row.addWidget(self.apply_roi_btn, 2)
+        roi_row.addWidget(self.cancel_roi_btn, 1)
+        layout.addLayout(roi_row)
 
         # ROI Background Mask
         mask_row = QHBoxLayout()
@@ -238,6 +247,17 @@ class ControlPanel(QFrame):
         self.brightness_slider.setEnabled(enabled)
         self.original_btn.setEnabled(available)
         self.enhanced_btn.setEnabled(enabled)
+
+    def set_roi_controls(self, available, editing, has_points, has_roi, can_apply=False):
+        # Replace Draw/Edit with Apply and Cancel in the same row while editing.
+        self.roi_btn.setVisible(not editing)
+        self.roi_btn.setEnabled(available and not editing)
+        self.apply_roi_btn.setVisible(editing)
+        self.apply_roi_btn.setEnabled(editing and can_apply)
+        self.cancel_roi_btn.setVisible(editing)
+        self.undo_btn.setEnabled(editing and has_points)
+        self.reset_roi_btn.setEnabled(has_points or has_roi or editing)
+        self.mask_checkbox.setEnabled(has_roi and not editing)
 
     def _update_filename(self):
         text = self._filename or "No file selected"

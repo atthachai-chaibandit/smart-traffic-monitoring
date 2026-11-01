@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QImageReader
+from PyQt6.QtGui import QImage, QImageReader, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QHBoxLayout, QMainWindow, 
     QScrollArea, QVBoxLayout, 
@@ -17,7 +17,7 @@ from .app_title import AppTitle
 from .control_panel import ControlPanel
 from .preview_canvas import PreviewCanvas
 from .media_formats import SUPPORTED_FILE_FORMATS
-from ..preprocessing import brighten_frame
+from ..preprocessing import brighten_frame, mask_outside_roi
 
 class MainWindow(QMainWindow):
     """Local media selection and preview; detection is not connected yet."""
@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         # Initialize UI and Signals
         self.setup_ui()
         self.connect_signals()
+        self.update_roi_controls()
         
         # Center Window on Screen
         screen = self.screen()
@@ -130,6 +131,22 @@ class MainWindow(QMainWindow):
         panel.brightness_slider.valueChanged.connect(self.refresh_preview)
         panel.original_btn.clicked.connect(self.refresh_preview)
         panel.enhanced_btn.clicked.connect(self.refresh_preview)
+
+        panel.roi_btn.clicked.connect(self.begin_roi)
+        panel.apply_roi_btn.clicked.connect(self.finish_roi)
+        panel.cancel_roi_btn.clicked.connect(self.preview_canvas.cancel_roi)
+        panel.undo_btn.clicked.connect(self.preview_canvas.undo_roi_point)
+        panel.reset_roi_btn.clicked.connect(self.preview_canvas.clear_roi)
+        panel.mask_checkbox.toggled.connect(self.refresh_preview)
+        self.preview_canvas.roi_changed.connect(self.on_roi_changed)
+
+        # Window shortcuts still work after using a control outside the image.
+        self.roi_shortcuts = []
+        for key, handler in (("Return", self.finish_roi), ("Enter", self.finish_roi),
+                             ("Escape", self.preview_canvas.cancel_roi)):
+            shortcut = QShortcut(QKeySequence(key), self)
+            shortcut.activated.connect(handler)
+            self.roi_shortcuts.append(shortcut)
         
     def browse_media(self):
         # Generate Supported Media File Filter
@@ -188,6 +205,8 @@ class MainWindow(QMainWindow):
 
         # Keep the previous file and preview intact until decoding succeeds.
         self.stop_current_video()
+        self.raw_frame = None
+        self.preview_canvas.clear_roi()
         self.capture = capture
         self.fps = fps
         self.total_frames = total_frames
@@ -199,6 +218,7 @@ class MainWindow(QMainWindow):
         if capture is not None:
             self.preview_canvas.configure_timeline(self.total_frames, self.fps)
             self.update_playback_time()
+        self.update_roi_controls()
 
     @staticmethod
     def image_to_frame(image):
@@ -229,10 +249,47 @@ class MainWindow(QMainWindow):
         if panel.enhance_checkbox.isChecked() and panel.enhanced_btn.isChecked():
             shown = brighten_frame(frame, panel.brightness_slider.value())
             mode = "Enhanced"
+        canvas = self.preview_canvas
+        if canvas.editing_roi:
+            # Show the full image while choosing a replacement polygon.
+            mode += " · ROI editing"
+        elif panel.mask_checkbox.isChecked() and canvas.roi_points:
+            shown = mask_outside_roi(shown, canvas.roi_points)
+            mode += " · Masked"
         image = self.frame_to_image(shown)
         self.raw_frame = frame
         self.preview_canvas.show_image(image)
         self.preview_canvas.set_preview_mode(mode)
+
+    def begin_roi(self):
+        if self.raw_frame is None or self._seeking:
+            return
+        self.pause_video()
+        self.preview_canvas.begin_roi()
+
+    def finish_roi(self):
+        return self.preview_canvas.finish_roi()
+
+    def on_roi_changed(self):
+        self.update_roi_controls()
+        self.refresh_preview()
+        self.preview_canvas.image_label.update()
+
+    def update_roi_controls(self):
+        canvas = self.preview_canvas
+        editing = canvas.editing_roi
+        # Keep the whole image available for placing points while editing.
+        canvas.detection_overlay.setVisible(not editing)
+        self.control_panel.set_roi_controls(
+            self.raw_frame is not None, editing, bool(canvas.draft_points),
+            bool(canvas.roi_points), canvas.can_apply_roi()
+        )
+        for shortcut in self.roi_shortcuts:
+            shortcut.setEnabled(editing)
+        video_enabled = self.capture is not None and not editing
+        canvas.play_btn.setEnabled(video_enabled)
+        canvas.reset_btn.setEnabled(video_enabled)
+        canvas.timeline_slider.setEnabled(video_enabled and self.total_frames > 1)
 
     @staticmethod
     def frame_to_image(frame):
@@ -244,7 +301,7 @@ class MainWindow(QMainWindow):
         ).copy()
 
     def toggle_playback(self):
-        if self.capture is None or self._seeking:
+        if self.capture is None or self._seeking or self.preview_canvas.editing_roi:
             return
         if self.playback_timer.isActive():
             self.pause_video()
@@ -285,7 +342,7 @@ class MainWindow(QMainWindow):
         return self.seek_video(0)
 
     def seek_video(self, frame_index):
-        if self.capture is None:
+        if self.capture is None or self.preview_canvas.editing_roi:
             return False
         self.pause_video()
         frame_index = max(0, min(frame_index, self.total_frames - 1)) if self.total_frames else 0
