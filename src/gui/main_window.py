@@ -18,7 +18,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 580)
         style_dir = Path(__file__).resolve().parent / "styles"
         styles = "\n".join(
-            (style_dir / name).read_text(encoding="utf-8")
+            (style_dir / name).read_text(encoding="utf-8-sig")
             for name in ("main.qss", "app_title.qss", "preview_canvas.qss", "control_panel.qss")
         )
         assets = (style_dir.parent / "assets").as_posix()

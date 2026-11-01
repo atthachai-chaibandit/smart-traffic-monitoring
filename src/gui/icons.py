@@ -11,14 +11,14 @@ ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
 
 def get_pixmap(
-    name: str,
+    file_name: str,
     color: str = "#A78BFA",
     size: int = 24,
-    dpr: float = 1.0,
+    dpr: float = 1.0, # Device Pixel Ratio
 ) -> QPixmap:
     """Render a recolored SVG at the target display's pixel density."""
 
-    path = ICON_DIR / f"{name}.svg"
+    path = ICON_DIR / f"{file_name}.svg"
 
     if not path.is_file():
         raise FileNotFoundError(f"Icon not found: {path}")
@@ -35,7 +35,7 @@ def get_pixmap(
     svg = path.read_text(encoding="utf-8")
 
     # Replace Tabler's currentColor with the requested HEX
-    svg = svg.replace("currentColor", QColor(color).name())
+    svg = svg.replace("currentColor", color)
 
     # Render SVG to transparent pixmap
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))

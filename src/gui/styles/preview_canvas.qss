@@ -11,3 +11,12 @@ QFrame#playbackBar, QFrame#statCard {
 }
 QLabel#statValue { font-size: 22px; font-weight: 600; }
 QPushButton#playButton { border: 1px solid #A78BFA; border-radius: 14px; }
+
+QFrame#detectionOverlay {
+    background-color: #252533;
+    border: 1px solid #464655;
+    border-radius: 11px;
+}
+QLabel#overlayTitle { font-size: 13px; font-weight: 700; }
+QLabel#overlayCaption { color: #9CA3AF; font-size: 10px; }
+QLabel#overlayValue { font-size: 13px; font-weight: 600; }

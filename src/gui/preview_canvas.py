@@ -1,7 +1,9 @@
-﻿from PyQt6.QtCore import Qt
+﻿
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .icons import get_pixmap, set_button_icon
+from .detection_overlay import DetectionOverlay
 
 
 class PreviewCanvas(QWidget):
@@ -10,53 +12,88 @@ class PreviewCanvas(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
+        # Main Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+
+        # Preview Header
         title_row = QHBoxLayout()
+
         heading = QLabel("Preview Workspace")
         heading.setObjectName("sectionHeading")
         title_row.addWidget(heading)
         title_row.addStretch()
+
+        # Preview Mode Label
         mode = QLabel("Original / Enhanced / Masked")
         mode.setObjectName("mutedText")
         title_row.addWidget(mode)
         layout.addLayout(title_row)
 
+        # Preview Area
         self.preview = QFrame()
         self.preview.setObjectName("previewArea")
         self.preview.setMinimumSize(400, 240)
+
+        # Empty State Layout
         empty = QVBoxLayout(self.preview)
         empty.setContentsMargins(16, 16, 16, 16)
         empty.setSpacing(8)
         empty.addStretch()
+
+        # Upload Placeholder Icon
         icon = QLabel()
-        icon.setPixmap(get_pixmap("photo-plus", "#A78BFA", 34, self.devicePixelRatioF()))
+        icon.setPixmap(
+            get_pixmap("photo-plus", "#A78BFA", 34, self.devicePixelRatioF())
+        )
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.addWidget(icon)
+
+        # Upload Placeholder Title
         title = QLabel("Upload Image or Video")
         title.setObjectName("emptyTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.addWidget(title)
+
+        # Upload Placeholder Hint
         hint = QLabel("Choose a file to start processing")
         hint.setObjectName("mutedText")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.addWidget(hint)
+
         empty.addStretch()
         layout.addWidget(self.preview, 1)
 
+        # Detection Overlay
+        self.detection_overlay = DetectionOverlay(self.preview)
+        self.detection_overlay.raise_()
+
+        # Monitor Preview Resize Events
+        self.preview.installEventFilter(self)
+
+        # Playback Controls
         self.playback = QFrame()
         self.playback.setObjectName("playbackBar")
         self.playback.setFixedHeight(44)
+
         playback = QHBoxLayout(self.playback)
         playback.setContentsMargins(10, 0, 10, 0)
         playback.setSpacing(10)
+
+        # Play Button
         self.play_btn = self.icon_button("player-play", "Play video", "#A78BFA")
         self.play_btn.setObjectName("playButton")
+
+        # Playback Time Label
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setObjectName("mutedText")
+
+        # Reset and Fullscreen Buttons
         self.reset_btn = self.icon_button("refresh", "Reset preview")
         self.fullscreen_btn = self.icon_button("maximize", "Fullscreen preview")
+
+        # Add Playback Widgets
         playback.addWidget(self.play_btn)
         playback.addWidget(self.time_label)
         playback.addStretch()
@@ -64,39 +101,88 @@ class PreviewCanvas(QWidget):
         playback.addWidget(self.fullscreen_btn)
         layout.addWidget(self.playback)
 
-        stats = QHBoxLayout()
+        # Vehicle Counting Summary
+        self.counting_summary = QWidget()
+        self.counting_summary.setFixedHeight(68)
+
+        stats = QHBoxLayout(self.counting_summary)
+        stats.setContentsMargins(0, 0, 0, 0)
         stats.setSpacing(8)
-        self.total_label = self.create_stat("Total Vehicles")
-        self.cars_label = self.create_stat("Cars")
-        self.other_label = self.create_stat("Other Vehicles")
-        for card in (self.total_label, self.cars_label, self.other_label):
+
+        # Counting Statistic Cards
+        self.total_card = self.create_stat("Total Counted", "car", "#A78BFA")
+        self.in_card = self.create_stat("IN", "arrow-down-right", "#34D399")
+        self.out_card = self.create_stat("OUT", "arrow-up-right", "#FBBF24")
+
+        # Add Statistic Cards
+        for card in (self.total_card, self.in_card, self.out_card):
             stats.addWidget(card, 1)
-        layout.addLayout(stats)
+
+        self.counting_summary.setToolTip("Cumulative vehicle crossings at the counting line")
+        layout.addWidget(self.counting_summary)
+
+    def eventFilter(self, watched, event):
+        # Adjust Empty State Spacing When Preview Resizes
+        if watched is self.preview and event.type() == QEvent.Type.Resize:
+            overlay = self.detection_overlay
+
+            # Keep the empty-state message below the overlay on narrow previews.
+            narrow = self.preview.width() < 2 * (overlay.width() + overlay.MARGIN) + 34
+            top = overlay.height() + 2 * overlay.MARGIN if narrow else 16
+            self.preview.layout().setContentsMargins(16, top, 16, 16)
+
+        return super().eventFilter(watched, event)
 
     @staticmethod
     def icon_button(icon, label, color="#9CA3AF"):
+        # Create Icon Button
         button = QPushButton()
         button.setObjectName("iconButton")
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         button.setFixedSize(28, 28)
+
+        # Button Accessibility and Interaction
         button.setToolTip(label)
         button.setAccessibleName(label)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Button Icon
         set_button_icon(button, icon, color, 20)
         return button
 
-    @staticmethod
-    def create_stat(title):
+    def create_stat(self, title, icon_name, color):
+        # Create Statistic Card
         card = QFrame()
         card.setObjectName("statCard")
         card.setFixedHeight(68)
+
+        # Card Layout
         layout = QVBoxLayout(card)
         layout.setContentsMargins(12, 9, 12, 8)
         layout.setSpacing(4)
+
+        # Statistic Label
         name = QLabel(title)
         name.setObjectName("mutedText")
-        layout.addWidget(name)
+
+        # Card Header
+        heading = QHBoxLayout()
+        heading.setSpacing(8)
+        heading.addWidget(name)
+        heading.addStretch()
+
+        # Statistic Icon
+        icon = QLabel()
+        icon.setFixedSize(16, 16)
+        icon.setPixmap(
+            get_pixmap(icon_name, color, 16, self.devicePixelRatioF())
+        )
+        heading.addWidget(icon)
+        layout.addLayout(heading)
+
+        # Statistic Value
         value = QLabel("\u2014")
         value.setObjectName("statValue")
         layout.addWidget(value)
+
         return card

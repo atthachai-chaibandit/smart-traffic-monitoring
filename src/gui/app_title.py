@@ -27,8 +27,9 @@ class AppTitle(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
+        # Main Layout
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 1)
+        layout.setContentsMargins(12, 0, 12, 1)
         layout.setSpacing(10)
 
         # App Icon
@@ -43,14 +44,6 @@ class AppTitle(QWidget):
             "SMART TRAFFIC MONITORING"
         )
         self.app_title.setObjectName("appTitle")
-
-        # Media Status
-        self.media_status = QLabel("No media loaded")
-        self.media_status.setObjectName("mediaStatus")
-        self.media_status.setFixedHeight(26)
-        self.media_status.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
 
         # Settings Button
         self.settings_btn = QPushButton()
@@ -74,11 +67,4 @@ class AppTitle(QWidget):
         layout.addWidget(self.app_icon)
         layout.addWidget(self.app_title)
         layout.addStretch()
-        layout.addWidget(self.media_status)
         layout.addWidget(self.settings_btn)
-
-    def set_media_status(self, filename):
-        self.media_status.setText(
-            filename if filename else "No media loaded"
-        )
-        self.media_status.setToolTip(filename or "No media loaded")
